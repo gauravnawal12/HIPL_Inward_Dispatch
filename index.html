@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════╗
+  ║         HELIX FACTORY — MATERIAL REGISTER  v3.0             ║
+  ║  Single-file app — works in any browser, mobile-friendly     ║
+  ║                                                              ║
+  ║  WHAT'S NEW IN v3:                                           ║
+  ║  • Google Sheets now receives per-person tabs (Mukesh,       ║
+  ║    Subhash, Anandaram) — same structure as Excel export      ║
+  ║  • Full mobile / touch responsive layout                     ║
+  ║  • Larger tap targets, stacked columns on small screens      ║
+  ╚══════════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Helix Register"/>
+<meta name="theme-color" content="#1a1a2e"/>
+<meta name="description" content="Helix Factory Material Inward and Dispatch Register"/>
+<title>Helix Factory — Material Register</title>
+<!-- PWA Manifest — tells the browser this is installable as an app -->
+<link rel="manifest" href="./manifest.json"/>
+<!-- Apple touch icon — shown on iPhone home screen when installed -->
+<link rel="apple-touch-icon" href="./icon-192.png"/>
+<!-- Shortcut icon for browser tab -->
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png"/>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+/* ══════════════════════════════════════════════
+   GLOBAL RESET & BASE
+══════════════════════════════════════════════ */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { font-size: 16px; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #f0f4f8; min-height: 100vh; }
+
+@keyframes toastIn { from{opacity:0;transform:translate(-50%,14px) scale(.94)}to{opacity:1;transform:translate(-50%,0) scale(1)} }
+@keyframes pulse   { 0%,100%{opacity:1}50%{opacity:.4} }
+@keyframes spin    { to{transform:rotate(360deg)} }
+
+/* Larger tap targets on mobile (min 44px touch area) */
+input, select, button { font-family: inherit; font-size: 16px; /* prevents iOS zoom on focus */ }
+input:focus, select:focus { outline:none!important; border-color:#0f3460!important; box-shadow:0 0 0 3px rgba(15,52,96,.15)!important; }
+button { transition:all .12s; cursor:pointer; }
+button:active { transform:scale(.96); }
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:#f1f5f9}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+
+/* ══════════════════════════════════════════════
+   HEADER
+══════════════════════════════════════════════ */
+#hdr {
+  background: linear-gradient(135deg,#1a1a2e 0%,#16213e 55%,#0f3460 100%);
+  color:#fff; padding:14px 16px 0;
+  box-shadow:0 4px 20px rgba(0,0,0,.3);
+  position: sticky; top:0; z-index:100; /* stays visible on scroll */
+}
+.hi  { max-width:1020px; margin:0 auto; }
+.ht  { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+.logo{ width:38px;height:38px;background:rgba(255,255,255,.12);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0; }
+.hr  { margin-left:auto; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+
+.spill{ font-size:11px;display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.1);padding:4px 9px;border-radius:16px; }
+.sdot { width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0; }
+
+/* Tabs at bottom of header */
+#tabs { display:flex; gap:2px; margin-top:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+#tabs::-webkit-scrollbar { display:none; }
+.tb {
+  padding:9px 14px; border:none; font-weight:700; font-size:12px;
+  border-radius:7px 7px 0 0; display:flex; align-items:center; gap:5px;
+  background:rgba(255,255,255,.1); color:rgba(255,255,255,.8);
+  white-space:nowrap; flex-shrink:0; min-height:44px;
+}
+.tb.on { background:#fff; color:#1a1a2e; }
+.tc { border-radius:10px;padding:1px 6px;font-size:11px;font-weight:800;color:#fff;background:rgba(255,255,255,.25); }
+.tb.on .tc { background:var(--c); }
+
+/* Header action buttons */
+.expb { background:#e94560;border:none;color:#fff;padding:7px 12px;border-radius:7px;font-weight:700;font-size:12px;min-height:36px; }
+.cfgb { background:rgba(255,255,255,.15);border:none;color:#fff;padding:7px 10px;border-radius:7px;font-weight:600;font-size:12px;min-height:36px; }
+
+/* ══════════════════════════════════════════════
+   MAIN CONTENT
+══════════════════════════════════════════════ */
+#wrap { max-width:1020px; margin:0 auto; padding:16px 12px 80px; }
+
+/* Cards */
+.card { background:#fff;border-radius:14px;box-shadow:0 2px 16px rgba(0,0,0,.07);overflow:hidden;margin-bottom:14px; }
+.ch   { padding:12px 16px 10px;border-bottom:1px solid #f1f5f9;border-left:4px solid var(--ac,#0f3460); }
+.ch h2 { font-size:14px;font-weight:700;color:#1a1a2e; }
+.ch p  { font-size:11px;color:#94a3b8;margin-top:2px; }
+.cb   { padding:14px 16px 16px; }
+
+/* Field labels */
+label.lbl { display:block;font-size:10px;font-weight:700;color:#64748b;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px; }
+
+/* Inputs & Selects — font-size:16px prevents iOS auto-zoom */
+input.inp, select.inp {
+  width:100%; padding:10px 12px; border:1.5px solid #e2e8f0;
+  border-radius:9px; font-size:16px; color:#1e293b; background:#fff;
+  transition:border-color .15s,box-shadow .15s; font-family:inherit;
+  min-height:44px; /* Apple recommended touch target */
+}
+select.inp {
+  padding-right:30px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;appearance:none;
+}
+select.inp:disabled { background:#f8fafc;color:#94a3b8;cursor:not-allowed; }
+
+/* ══════════════════════════════════════════════
+   GRID LAYOUTS
+   Desktop = side-by-side columns
+   Mobile  = stacked (1 column)
+══════════════════════════════════════════════ */
+.g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.g4 { display:grid; grid-template-columns:1.3fr 1fr 1.3fr 1fr; gap:10px; }
+/* Dispatch material row: 6 columns on desktop */
+.g6 { display:grid; grid-template-columns:1.4fr 1.4fr .9fr 1fr 1fr .8fr; gap:10px; }
+.sp3{ grid-column:span 3; }
+
+/* ── Mobile: collapse all grids to 2-col then 1-col ── */
+@media (max-width: 700px) {
+  .g3 { grid-template-columns:1fr 1fr; }
+  .g3 .sp3 { grid-column:span 2; }
+  .g4 { grid-template-columns:1fr 1fr; }
+  .g6 { grid-template-columns:1fr 1fr; }  /* 6→2 cols */
+}
+@media (max-width: 420px) {
+  .g3,.g4,.g6 { grid-template-columns:1fr; }  /* full stack on very small phones */
+  .g3 .sp3 { grid-column:span 1; }
+}
+
+/* Spacing helpers */
+.mt6{margin-top:6px}.mt7{margin-top:7px}
+
+/* ══════════════════════════════════════════════
+   MATERIAL ROWS (grey boxes inside forms)
+══════════════════════════════════════════════ */
+.mr  { background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:10px; }
+.mrh { display:flex;justify-content:space-between;align-items:center;margin-bottom:10px; }
+.mrl { font-weight:700;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px; }
+.rmb { background:none;border:none;color:#e94560;font-size:20px;line-height:1;padding:4px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center; }
+
+/* Buttons */
+.addb { background:#f1f5f9;border:1.5px dashed #cbd5e1;color:#475569;padding:8px 14px;border-radius:8px;font-weight:600;font-size:13px;min-height:40px; }
+.savb { width:100%;margin-top:10px;padding:14px;color:#fff;border:none;border-radius:10px;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;min-height:50px; }
+.savb:disabled { opacity:.6;cursor:not-allowed;transform:none; }
+
+/* ══════════════════════════════════════════════
+   RECORDS TAB
+══════════════════════════════════════════════ */
+.sbar { display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px; }
+.tgrp { display:flex;gap:6px; }
+.tog  { padding:8px 16px;border:none;font-weight:700;font-size:13px;border-radius:9px;min-height:40px; }
+.tog.on  { background:#0f3460;color:#fff;box-shadow:0 2px 8px rgba(15,52,96,.25); }
+.tog.off { background:#e2e8f0;color:#475569; }
+
+.tw   { overflow-x:auto;-webkit-overflow-scrolling:touch; }
+table { width:100%;border-collapse:collapse;min-width:600px; }
+th    { padding:9px 10px;text-align:left;color:#475569;font-weight:700;border-bottom:2px solid #e2e8f0;white-space:nowrap;font-size:12px;background:#f8fafc; }
+td    { padding:8px 10px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:12px;white-space:nowrap; }
+tr:nth-child(even) td { background:#f8fafc; }
+.qi{font-weight:700;color:#16a34a}.qo{font-weight:700;color:#f97316}
+.da{color:#cbd5e1}
+.delb { background:none;border:none;color:#fca5a5;font-size:16px;padding:4px 6px;border-radius:4px;min-height:36px; }
+.bdg  { padding:2px 7px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap; }
+.bm{background:#dbeafe;color:#1e40af}.br{background:#fef9c3;color:#854d0e}.bo{background:#f1f5f9;color:#475569}
+
+/* ══════════════════════════════════════════════
+   GOOGLE SHEETS SETUP PANEL
+══════════════════════════════════════════════ */
+#sup { background:#fffbeb;border:1.5px solid #f59e0b;border-radius:12px;padding:16px;margin-bottom:14px;display:none; }
+#sup h3 { color:#92400e;font-size:13px;margin-bottom:8px;font-weight:700; }
+.ssl    { padding-left:16px;margin:8px 0 10px; }
+.ssl li { color:#78350f;font-size:12px;margin-bottom:4px;line-height:1.5; }
+#codebox { background:rgba(0,0,0,.06);border-radius:8px;padding:10px;margin-top:8px;font-size:11px;font-family:monospace;line-height:1.6;color:#1e293b;white-space:pre-wrap;overflow-x:auto;max-height:220px;overflow-y:auto;border:1px solid #e2e8f0; }
+.srow { display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap; }
+.srow input  { flex:1;min-width:140px;padding:10px 12px;border:1.5px solid #f59e0b;border-radius:8px;font-size:14px;font-family:inherit;min-height:44px; }
+.srow button { padding:10px 14px;border:none;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap;color:#fff;min-height:44px; }
+
+/* Empty states */
+.emp  { padding:40px 20px;text-align:center;color:#94a3b8; }
+.empi { font-size:36px;margin-bottom:8px; }
+
+/* Toast popup */
+#toast {
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  color:#fff;padding:10px 22px;border-radius:10px;
+  box-shadow:0 8px 28px rgba(0,0,0,.22);font-size:14px;font-weight:600;
+  z-index:9999;white-space:nowrap;animation:toastIn .25s cubic-bezier(.34,1.56,.64,1);display:none;
+  max-width:calc(100vw - 32px); text-align:center;
+}
+/* Spinner inside save button */
+.spin { width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0; }
+
+/* ══════════════════════════════════════════════
+   BOTTOM NAV (mobile only) — fixed tab bar
+══════════════════════════════════════════════ */
+#botnav {
+  display:none; /* hidden on desktop */
+  position:fixed;bottom:0;left:0;right:0;
+  background:#fff;border-top:1px solid #e2e8f0;
+  box-shadow:0 -4px 12px rgba(0,0,0,.08);
+  z-index:200;
+}
+.bn { flex:1;border:none;background:none;padding:8px 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;color:#94a3b8;font-size:10px;font-weight:600;min-height:56px;cursor:pointer; }
+.bn.on { color:#0f3460; }
+.bn-ic { font-size:20px;line-height:1; }
+@media (max-width:700px) {
+  #botnav { display:flex; }
+  #tabs   { display:none; } /* hide header tabs on mobile — use bottom nav instead */
+  #wrap   { padding-bottom:90px; } /* space for bottom nav */
+  .ht     { margin-bottom:4px; }
+  /* Hide Export/Sheets buttons from header on mobile — too crowded */
+  .hr .expb, .hr .cfgb { display:none; }
+  /* Show them inline in the records panel instead */
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     HEADER
+═══════════════════════════════════════════════ -->
+<div id="hdr">
+  <div class="hi">
+    <div class="ht">
+      <div class="logo">🏭</div>
+      <div>
+        <h1 style="font-size:18px;font-weight:800;letter-spacing:.3px">Helix Factory</h1>
+        <p style="font-size:10px;opacity:.5;letter-spacing:1px">MATERIAL REGISTER</p>
+      </div>
+      <div class="hr">
+        <span class="spill"><span class="sdot" id="sdot" style="background:#94a3b8"></span><span id="slbl">Local Only</span></span>
+        <button class="expb" onclick="exportExcel()">⬇ Excel</button>
+        <button class="cfgb" onclick="toggleSetup()">⚙ Sheets</button>
+      </div>
+    </div>
+    <!-- Desktop tabs (hidden on mobile — bottom nav is used instead) -->
+    <div id="tabs">
+      <button class="tb on" id="t-in"  style="--c:#22c55e" onclick="goTab('inward')">📥 Inward <span class="tc" id="c-in">0</span></button>
+      <button class="tb"    id="t-out" style="--c:#f97316" onclick="goTab('dispatch')">📤 Dispatch <span class="tc" id="c-out">0</span></button>
+      <button class="tb"    id="t-rec" style="--c:#f59e0b" onclick="goTab('records')">📋 Records <span class="tc" id="c-rec">0</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CONTENT
+═══════════════════════════════════════════════ -->
+<div id="wrap">
+
+  <!-- GOOGLE SHEETS SETUP PANEL -->
+  <div id="sup">
+    <h3>⚙ Google Sheets Setup — one-time only</h3>
+    <ol class="ssl">
+      <li>Open your Google Sheet → <b>Extensions → Apps Script</b></li>
+      <li>Delete any code, paste the script below, click <b>Save 💾</b></li>
+      <li><b>Deploy → New deployment → Web app</b></li>
+      <li>Set <b>Execute as: Me</b> &amp; <b>Who has access: Anyone</b> → Deploy</li>
+      <li>Copy the <b>Web App URL</b>, paste below, click <b>Save URL</b></li>
+    </ol>
+    <details>
+      <summary style="cursor:pointer;font-weight:700;color:#92400e;font-size:12px">📋 Show Apps Script code to copy</summary>
+      <div style="position:relative">
+        <div id="codebox"></div>
+        <button onclick="copyCode()" style="position:absolute;top:8px;right:8px;background:#0f3460;color:#fff;border:none;padding:4px 9px;border-radius:5px;font-size:11px;font-weight:700">Copy</button>
+      </div>
+    </details>
+    <div class="srow">
+      <input id="urlin" placeholder="Paste Apps Script Web App URL here…" type="url"/>
+      <button onclick="saveUrl()"  style="background:#0f3460">Save URL</button>
+      <button onclick="testUrl()"  style="background:#16a34a">Test</button>
+    </div>
+  </div>
+
+  <!-- ═══════ PANEL: INWARD ═══════ -->
+  <div id="p-inward">
+    <div class="card" style="--ac:#22c55e">
+      <div class="ch"><h2>📥 Material Inward Entry</h2><p>Record raw materials received at the factory</p></div>
+      <div class="cb">
+        <div style="margin-bottom:12px">
+          <label class="lbl">Supplier Name *</label>
+          <select class="inp" id="in-sup" onchange="onSupChange()">
+            <option value="">— Select Supplier —</option>
+            <option>ओम विष्णु (Om Vishnu - Bajri)</option>
+            <option>एन.डी. स्टोन (N.D. Stone - Gitti)</option>
+            <option>अलंकार उद्योग (Alankar Udyog - Gitti)</option>
+            <option>चैलाराम जी (Chelaram Ji - Gitti)</option>
+            <option>महादेव स्टोन (Mahadev Stone - Gitti)</option>
+            <option>अल्ट्राटेक (Ultratech - Cement)</option>
+            <option>धायल (Dhayal - Water Tanker)</option>
+            <option value="__oth__">Other (type below)</option>
+          </select>
+          <input class="inp mt7" id="in-sup-c" placeholder="Enter supplier name" style="display:none"/>
+        </div>
+        <div id="in-body" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-weight:700;color:#475569;font-size:13px">Material Entries</span>
+            <button class="addb" onclick="addInRow()">+ Add Material</button>
+          </div>
+          <div id="in-rows"></div>
+          <button class="savb" id="in-savb" style="background:linear-gradient(135deg,#16a34a,#15803d)" onclick="submitIn()">✓ Save Inward Entry</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ PANEL: DISPATCH ═══════ -->
+  <div id="p-dispatch" style="display:none">
+    <div class="card" style="--ac:#f97316">
+      <div class="ch"><h2>📤 Material Dispatch Entry</h2><p>Record materials dispatched from factory to site</p></div>
+      <div class="cb">
+        <div class="g3" style="margin-bottom:12px">
+          <div>
+            <label class="lbl">Entered By *</label>
+            <select class="inp" id="out-who">
+              <option value="">— Select Name —</option>
+              <option>Mukesh</option>
+              <option>Subhash</option>
+              <option>Anandaram</option>
+            </select>
+          </div>
+          <div>
+            <label class="lbl">Party / Site Name *</label>
+            <input class="inp" id="out-party" placeholder="Party or site name"/>
+          </div>
+          <div>
+            <label class="lbl">Bill / Challan Number *</label>
+            <input class="inp" id="out-bill" placeholder="Bill / Challan No."/>
+          </div>
+          <div class="sp3">
+            <label class="lbl">Vehicle Number *</label>
+            <div style="display:flex;gap:8px">
+              <select class="inp" id="out-veh" onchange="onVehChg()" style="flex:1">
+                <option value="">— Select Vehicle —</option>
+                <option>RJ 19 RF 8056</option>
+                <option>RJ 07 RA 9480</option>
+                <option>RJ 19 GJ 9279</option>
+                <option>RJ 19 GG 2398</option>
+                <option value="__oth__">Other</option>
+              </select>
+              <input class="inp" id="out-veh-c" placeholder="Vehicle number" style="display:none;flex:1"/>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <span style="font-weight:700;color:#475569;font-size:13px">Materials to Dispatch</span>
+          <button class="addb" onclick="addOutRow()">+ Add Material</button>
+        </div>
+        <div id="out-rows"></div>
+        <button class="savb" id="out-savb" style="background:linear-gradient(135deg,#ea580c,#c2410c)" onclick="submitOut()">✓ Save Dispatch Entry</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ PANEL: RECORDS ═══════ -->
+  <div id="p-records" style="display:none">
+    <div class="sbar">
+      <div class="tgrp">
+        <button class="tog on"  id="rb-in"  onclick="goRec('inward')">📥 Inward (<span id="rc-in">0</span>)</button>
+        <button class="tog off" id="rb-out" onclick="goRec('dispatch')">📤 Dispatch (<span id="rc-out">0</span>)</button>
+      </div>
+      <!-- On mobile, show Export here since header buttons are hidden -->
+      <button class="expb" onclick="exportExcel()" style="font-size:13px">⬇ Export Excel</button>
+    </div>
+    <!-- Setup button only on mobile -->
+    <div style="margin-bottom:10px;display:none" id="mob-cfg">
+      <button onclick="toggleSetup()" style="width:100%;background:#f59e0b;border:none;color:#fff;padding:10px;border-radius:8px;font-weight:700;font-size:13px">⚙ Configure Google Sheets Sync</button>
+    </div>
+    <div class="card">
+      <div id="rt-in"></div>
+      <div id="rt-out" style="display:none"></div>
+    </div>
+  </div>
+
+</div><!-- end #wrap -->
+
+<!-- MOBILE BOTTOM NAV (hidden on desktop via CSS) -->
+<nav id="botnav">
+  <button class="bn on" id="bn-in"  onclick="goTab('inward')">
+    <span class="bn-ic">📥</span><span>Inward</span>
+  </button>
+  <button class="bn"    id="bn-out" onclick="goTab('dispatch')">
+    <span class="bn-ic">📤</span><span>Dispatch</span>
+  </button>
+  <button class="bn"    id="bn-rec" onclick="goTab('records')">
+    <span class="bn-ic">📋</span><span>Records</span>
+  </button>
+</nav>
+
+<div id="toast"></div>
+
+<!-- PWA INSTALL BANNER -->
+<div id="install-banner" style="display:none;position:fixed;bottom:70px;left:12px;right:12px;background:linear-gradient(135deg,#1a1a2e,#0f3460);color:#fff;border-radius:14px;padding:14px 16px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,0.35);align-items:center;gap:12px">
+  <span style="font-size:28px">🏭</span>
+  <div style="flex:1">
+    <div style="font-weight:700;font-size:14px">Install Helix Register</div>
+    <div style="font-size:11px;opacity:.7;margin-top:2px">Add to home screen — works offline too</div>
+  </div>
+  <button id="install-btn" style="background:#22c55e;border:none;color:#fff;padding:8px 14px;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap">Install</button>
+  <button onclick="g('install-banner').style.display='none'" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:8px 10px;border-radius:8px;font-size:13px">✕</button>
+</div>
+
+<!-- OFFLINE INDICATOR BAR -->
+<div id="offline-bar" style="display:none;position:fixed;top:0;left:0;right:0;background:#dc2626;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:600;z-index:600">
+  📴 Offline — data saved locally, will sync when reconnected
+</div>
+
+<script>
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 1 — MASTER DATA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Vehicles per supplier */
+var SV = {
+  "ओम विष्णु (Om Vishnu - Bajri)":         ["RJ 28 GA 4903","3837","4455"],
+  "एन.डी. स्टोन (N.D. Stone - Gitti)":     ["RJ 19 GF 7363","RJ 19 GF 7365","RJ 19 GF 7354"],
+  "अलंकार उद्योग (Alankar Udyog - Gitti)": ["5770","1044","3359","8384","6524","5535","3949"],
+  "चैलाराम जी (Chelaram Ji - Gitti)":      ["RJ 19 GD 4474"],
+  "महादेव स्टोन (Mahadev Stone - Gitti)":  ["RJ 19 GJ 5297"],
+  "अल्ट्राटेक (Ultratech - Cement)":       [],
+  "धायल (Dhayal - Water Tanker)":          ["RJ 19 GJ 0320","RJ 19 GD 5152"]
+};
+/* Materials per supplier */
+var SM = {
+  "ओम विष्णु (Om Vishnu - Bajri)":         ["Sand"],
+  "एन.डी. स्टोन (N.D. Stone - Gitti)":     ["6 mm","10 mm","20 mm","Dust","Mix Dust"],
+  "अलंकार उद्योग (Alankar Udyog - Gitti)": ["Dust","Mix Dust","6 mm","10 mm","20 mm"],
+  "चैलाराम जी (Chelaram Ji - Gitti)":      ["Dust","Mix Dust","6 mm","10 mm","20 mm"],
+  "महादेव स्टोन (Mahadev Stone - Gitti)":  ["Dust","Mix Dust","6 mm","10 mm","20 mm"],
+  "अल्ट्राटेक (Ultratech - Cement)":       ["Cement Bag","Cement Bulker"],
+  "धायल (Dhayal - Water Tanker)":          ["10 Chakka Tanker","6 Chakka Tanker"]
+};
+/* English name lookup for suppliers */
+var SE = {
+  "ओम विष्णु (Om Vishnu - Bajri)":"Om Vishnu",
+  "एन.डी. स्टोन (N.D. Stone - Gitti)":"N.D. Stone",
+  "अलंकार उद्योग (Alankar Udyog - Gitti)":"Alankar Udyog",
+  "चैलाराम जी (Chelaram Ji - Gitti)":"Chelaram Ji",
+  "महादेव स्टोन (Mahadev Stone - Gitti)":"Mahadev Stone",
+  "अल्ट्राटेक (Ultratech - Cement)":"Ultratech",
+  "धायल (Dhayal - Water Tanker)":"Dhayal"
+};
+/* Designs per dispatch type */
+var DD = {
+  "रबर मोल्ड (Rubber Moulded)":[
+    "हेक्सागन (Hexagon)","8x8 रिवर (8x8 River)","ज़िगज़ैग (Zigzag)","जम्बो (Colarado)",
+    "8x4","4x4","कूल रूफ टाइल्स (Cool Roof Tiles)","4.5x4.5 कोबल (4.5x4.5 Cobble)",
+    "क्रॉस स्ट्रिप (Cross Strip)","36 स्ट्राइकर (36 Striker)","नया चेकरड (New Chequered)",
+    "नाली (Drain)","कर्बस्टोन (Kerbstone)","एक्स-ब्लॉक (X-Block)",
+    "बड़ा ग्रास पेवर (Riveira)","डमरू (Euphrates)","Cover Block Big","Cover Block Small"
+  ],
+  "मशीन निर्मित (Machine Made)":[
+    "हेक्सागन (Hexagon)","8x8","ज़िगज़ैग (Zigzag)","8x4","ईंटें (Bricks)",
+    "गोल कर्बस्टोन (Kerbstone Round)","चैम्फर कर्बस्टोन (Kerbstone Chamfered)",
+    "आई-शेप (I-Shape)","एस-पेवर (S-Paver)","ट्राइकोन (Tricon)"
+  ],
+  "अन्य (Other)":[]
+};
+/* Dispatch types with Hindi display + English saved value */
+var DT = [
+  {hi:"रबर मोल्ड (Rubber Moulded)",en:"Rubber Moulded"},
+  {hi:"मशीन निर्मित (Machine Made)",en:"Machine Made"},
+  {hi:"अन्य (Other)",en:"Other"}
+];
+var COLS  = ["ग्रे (Grey)","काला (Black)","लाल (Red)","पीला (Yellow)","नारंगी (Orange)","चॉकलेटी (Chocolate)","नीला (Blue)","Other"];
+var THKS  = ["60 mm","80 mm","100 mm","150 mm","Other"];
+var PEOPLE= ["Mukesh","Subhash","Anandaram"];
+var MONS  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 2 — STATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+var IK="hf_in_v5", OK="hf_out_v5", SK="hf_sc";
+var inR   = JSON.parse(localStorage.getItem(IK)||"[]");
+var outR  = JSON.parse(localStorage.getItem(OK)||"[]");
+var scUrl = localStorage.getItem(SK)||"";
+var inN=0, outN=0, recV="inward";
+
+function sl(){localStorage.setItem(IK,JSON.stringify(inR));localStorage.setItem(OK,JSON.stringify(outR));}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function ts(){var d=new Date();return{date:d.toLocaleDateString("en-IN"),time:d.toLocaleTimeString("en-IN",{hour12:false}),month:MONS[d.getMonth()]+" "+d.getFullYear()};}
+function g(id){return document.getElementById(id);}
+function upd(){
+  var ic=inR.length,oc=outR.length;
+  g("c-in").textContent=ic; g("c-out").textContent=oc; g("c-rec").textContent=ic+oc;
+  g("rc-in").textContent=ic; g("rc-out").textContent=oc;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 3 — TOAST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+var tt;
+function showMsg(m,t){
+  clearTimeout(tt);
+  var el=g("toast");
+  el.textContent=m;
+  el.style.background=t==="err"?"#dc2626":t==="inf"?"#475569":t==="wrn"?"#d97706":"#15803d";
+  el.style.display="block";
+  tt=setTimeout(function(){el.style.display="none";},3500);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 4 — SYNC STATUS DOT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function syncSt(s){
+  var dot=g("sdot"),lbl=g("slbl");
+  if(s==="ok")  {dot.style.background="#4ade80";dot.style.animation="none";lbl.textContent="Synced";}
+  else if(s==="ing"){dot.style.background="#fbbf24";dot.style.animation="pulse 1s infinite";lbl.textContent="Syncing…";}
+  else if(s==="err"){dot.style.background="#f87171";dot.style.animation="none";lbl.textContent="Sync Failed";}
+  else              {dot.style.background="#94a3b8";dot.style.animation="none";lbl.textContent="Local Only";}
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 5 — GOOGLE SHEETS PUSH
+   
+   HOW IT WORKS:
+   Each save sends rows to MULTIPLE sheets simultaneously:
+   • "Inward"          — always for inward entries
+   • "Outward"         — combined dispatch sheet (all people)
+   • "Dispatch - Name" — per-person sheet (e.g. "Dispatch - Mukesh")
+   
+   The Apps Script (doPost) receives { sheet, headers, rows }
+   and creates/appends to that exact tab in Google Sheets.
+   We call it multiple times — once per sheet that needs updating.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+async function pushOne(sheet, headers, rows) {
+  /* Send one batch of rows to one specific sheet tab name */
+  if (!scUrl || !rows.length) return;
+  var r = await fetch(scUrl, {
+    method:"POST",
+    body:JSON.stringify({sheet:sheet, headers:headers, rows:rows}),
+    headers:{"Content-Type":"text/plain"}
+  });
+  var j = await r.json();
+  if (j.status !== "ok") throw new Error("Sheet error: " + sheet);
+}
+
+/* Push inward rows — sends to just the "Inward" sheet tab */
+async function pushInward(rows) {
+  if (!scUrl) return;
+  syncSt("ing");
+  try {
+    await pushOne(
+      "Inward",
+      ["Date","Month","Time","Supplier Name","Bill/Challan No.","Material Name","Vehicle No.","Quantity"],
+      rows
+    );
+    syncSt("ok");
+  } catch(e) {
+    syncSt("err");
+    showMsg("Saved locally — Sheets sync failed","wrn");
+  }
+}
+
+/* Push dispatch rows — sends to 3 sheets in parallel:
+   1. "Outward"         (all dispatch records combined)
+   2. "Dispatch - Name" (this person's records only)
+   Both sheets get created automatically if they don't exist yet. */
+async function pushDispatch(who, headers, rows) {
+  if (!scUrl) return;
+  syncSt("ing");
+  try {
+    /* Send to combined "Outward" sheet */
+    await pushOne("Outward", headers, rows);
+    /* Send to the person's own sheet e.g. "Dispatch - Mukesh" */
+    await pushOne("Dispatch - " + who, headers, rows);
+    syncSt("ok");
+  } catch(e) {
+    syncSt("err");
+    showMsg("Saved locally — Sheets sync failed","wrn");
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 6 — SETUP PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function toggleSetup(){
+  var el=g("sup");
+  el.style.display=(el.style.display==="none"||el.style.display==="")?"block":"none";
+  g("urlin").value=scUrl;
+}
+function saveUrl(){
+  scUrl=g("urlin").value.trim();
+  localStorage.setItem(SK,scUrl);
+  syncSt(scUrl?"ok":"loc");
+  showMsg(scUrl?"URL saved — Sheets sync active":"URL cleared","inf");
+}
+function testUrl(){
+  if(!scUrl){showMsg("Enter the URL first","err");return;}
+  syncSt("ing");
+  fetch(scUrl)
+    .then(function(r){return r.json();})
+    .then(function(j){
+      if(j.status==="ready"){syncSt("ok");showMsg("Connection successful!");}
+      else throw 0;
+    })
+    .catch(function(){syncSt("err");showMsg("Connection failed — check URL & permissions","err");});
+}
+function copyCode(){
+  navigator.clipboard.writeText(g("codebox").textContent)
+    .then(function(){showMsg("Copied!");})
+    .catch(function(){showMsg("Select & copy manually","inf");});
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 7 — TAB SWITCHING
+   Updates both the desktop header tabs AND mobile bottom nav
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function goTab(name){
+  g("p-inward").style.display   =(name==="inward")   ?"":"none";
+  g("p-dispatch").style.display =(name==="dispatch")  ?"":"none";
+  g("p-records").style.display  =(name==="records")   ?"":"none";
+  /* Desktop tab buttons */
+  g("t-in").className  ="tb"+(name==="inward"   ?" on":"");
+  g("t-out").className ="tb"+(name==="dispatch"  ?" on":"");
+  g("t-rec").className ="tb"+(name==="records"   ?" on":"");
+  /* Mobile bottom nav buttons */
+  g("bn-in").className  ="bn"+(name==="inward"   ?" on":"");
+  g("bn-out").className ="bn"+(name==="dispatch"  ?" on":"");
+  g("bn-rec").className ="bn"+(name==="records"   ?" on":"");
+  if(name==="records") renderRec();
+  /* Scroll to top whenever switching tabs (important on mobile) */
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 8 — INWARD FORM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function onSupChange(){
+  var sel=g("in-sup").value;
+  g("in-sup-c").style.display=(sel==="__oth__")?"":"none";
+  var body=g("in-body");
+  if(sel){body.style.display="";g("in-rows").innerHTML="";inN=0;addInRow();}
+  else body.style.display="none";
+}
+function addInRow(){
+  var sup=g("in-sup").value, vehs=SV[sup]||[], mats=SM[sup]||[];
+  var id="ir"+uid(); inN++;
+  var vopt=vehs.map(function(v){return "<option>"+v+"</option>";}).join("")+"<option value='__oth__'>Other</option>";
+  var mopt=mats.map(function(m){return "<option>"+m+"</option>";}).join("")+"<option value='__oth__'>Other (type)</option>";
+  var div=document.createElement("div"); div.className="mr"; div.id=id;
+  div.innerHTML=
+    "<div class='mrh'><span class='mrl'>Material "+inN+"</span>"+
+    "<button class='rmb' onclick=\"remIn('"+id+"')\">&#x2715;</button></div>"+
+    "<div class='g4'>"+
+      "<div><label class='lbl'>Material Name *</label>"+
+      "<select class='inp' data-k='mat' onchange='onMatChg(this)'><option value=''>— Select —</option>"+mopt+"</select>"+
+      "<input class='inp mt6' data-k='mat-c' placeholder='Enter material name' style='display:none'/></div>"+
+      "<div><label class='lbl'>Quantity *</label>"+
+      "<input class='inp' type='number' inputmode='numeric' placeholder='Qty' data-k='qty'/></div>"+
+      "<div><label class='lbl'>Vehicle No.</label>"+
+      "<select class='inp' data-k='veh' onchange='onVehChgIn(this)'><option value=''>— Select —</option>"+vopt+"</select>"+
+      "<input class='inp mt6' data-k='veh-c' placeholder='Enter vehicle no.' style='display:none'/></div>"+
+      "<div><label class='lbl'>Bill / Challan No.</label>"+
+      "<input class='inp' placeholder='Optional' data-k='bil'/></div>"+
+    "</div>";
+  g("in-rows").appendChild(div);
+  refreshIn();
+}
+function onMatChg(s){s.nextElementSibling.style.display=(s.value==="__oth__")?"":"none";}
+function onVehChgIn(s){s.nextElementSibling.style.display=(s.value==="__oth__")?"":"none";}
+function remIn(id){g(id).remove();refreshIn();}
+function refreshIn(){
+  var rows=g("in-rows").querySelectorAll(".mr");
+  rows.forEach(function(r){r.querySelector(".rmb").style.display=(rows.length>1)?"":"none";});
+}
+async function submitIn(){
+  var ss=g("in-sup").value;
+  var sr=(ss==="__oth__")?g("in-sup-c").value.trim():ss;
+  if(!sr){showMsg("Select a supplier","err");return;}
+  var t=ts(),se=SE[sr]||sr,add=[];
+  g("in-rows").querySelectorAll(".mr").forEach(function(row){
+    var ms=row.querySelector("[data-k='mat']").value;
+    var mc=row.querySelector("[data-k='mat-c']").value.trim();
+    var mat=(ms==="__oth__")?mc:ms;
+    var qty=row.querySelector("[data-k='qty']").value.trim();
+    if(!mat||!qty)return;
+    var vs=row.querySelector("[data-k='veh']").value;
+    var vc=row.querySelector("[data-k='veh-c']").value.trim();
+    add.push({id:uid(),date:t.date,month:t.month,time:t.time,
+      supplierName:se,billNo:row.querySelector("[data-k='bil']").value.trim(),
+      materialName:mat,vehicleNo:(vs==="__oth__")?vc:vs,quantity:Number(qty)});
+  });
+  if(!add.length){showMsg("Add at least one material with quantity","err");return;}
+  inR=inR.concat(add);sl();upd();
+  var btn=g("in-savb");btn.disabled=true;btn.innerHTML="<span class='spin'></span> Saving…";
+  await pushInward(add.map(function(r){return[r.date,r.month,r.time,r.supplierName,r.billNo,r.materialName,r.vehicleNo,r.quantity];}));
+  btn.disabled=false;btn.innerHTML="&#10003; Save Inward Entry";
+  g("in-sup").value="";g("in-sup-c").style.display="none";g("in-body").style.display="none";
+  g("in-rows").innerHTML="";inN=0;
+  showMsg("&#10003; "+add.length+" inward entr"+(add.length>1?"ies":"y")+" saved");
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 9 — DISPATCH FORM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function onVehChg(){g("out-veh-c").style.display=(g("out-veh").value==="__oth__")?"":"none";}
+function addOutRow(){
+  var id="or"+uid(); outN++;
+  var topt=DT.map(function(t){return "<option value='"+t.hi+"'>"+t.hi+"</option>";}).join("");
+  var hopt=THKS.map(function(h){return "<option>"+h+"</option>";}).join("");
+  var copt=COLS.map(function(c){return "<option>"+c+"</option>";}).join("");
+  var div=document.createElement("div"); div.className="mr"; div.id=id;
+  div.innerHTML=
+    "<div class='mrh'><span class='mrl'>Material "+outN+"</span>"+
+    "<button class='rmb' onclick=\"remOut('"+id+"')\">&#x2715;</button></div>"+
+    "<div class='g6'>"+
+      "<div><label class='lbl'>Dispatch Type *</label>"+
+      "<select class='inp' data-k='typ' onchange='onTypChg(this)'><option value=''>— Select Type —</option>"+topt+"</select></div>"+
+      "<div><label class='lbl'>Design Name</label>"+
+      "<select class='inp' data-k='des' disabled><option value=''>— Select type first —</option></select>"+
+      "<input class='inp mt6' data-k='des-c' placeholder='Enter design name' style='display:none'/></div>"+
+      "<div><label class='lbl'>Thickness</label>"+
+      "<select class='inp' data-k='thk' onchange='onThkChg(this)'><option value=''>— Select —</option>"+hopt+"</select>"+
+      "<input class='inp mt6' data-k='thk-c' placeholder='e.g. 120mm' style='display:none'/></div>"+
+      "<div><label class='lbl'>Color</label>"+
+      "<select class='inp' data-k='col' onchange='onColChg(this)'><option value=''>— Select Color —</option>"+copt+"</select>"+
+      "<input class='inp mt6' data-k='col-c' placeholder='Enter color' style='display:none'/></div>"+
+      "<div><label class='lbl'>Quantity *</label>"+
+      "<input class='inp' type='number' inputmode='numeric' placeholder='Qty' data-k='qty'/></div>"+
+    "</div>";
+  g("out-rows").appendChild(div);
+  refreshOut();
+}
+function onThkChg(s){s.nextElementSibling.style.display=(s.value==="Other")?"":"none";}
+function onColChg(s){s.nextElementSibling.style.display=(s.value==="Other")?"":"none";}
+function onTypChg(s){
+  var row=s.closest(".mr"),tv=s.value,dgs=DD[tv]||[];
+  var ds=row.querySelector("[data-k='des']"),di=row.querySelector("[data-k='des-c']");
+  if(tv==="अन्य (Other)"){ds.style.display="none";di.style.display="";di.placeholder="Enter design / material name";}
+  else{
+    ds.style.display="";di.style.display="none";ds.disabled=false;
+    var o="<option value=''>— Select Design —</option>";
+    dgs.forEach(function(d){o+="<option>"+d+"</option>";});
+    o+="<option value='__oth__'>Other (type)</option>";
+    ds.innerHTML=o;
+    ds.onchange=function(){di.style.display=(this.value==="__oth__")?"":"none";};
+  }
+}
+function remOut(id){g(id).remove();refreshOut();}
+function refreshOut(){
+  var rows=g("out-rows").querySelectorAll(".mr");
+  rows.forEach(function(r){r.querySelector(".rmb").style.display=(rows.length>1)?"":"none";});
+}
+async function submitOut(){
+  var who=g("out-who").value, party=g("out-party").value.trim(), bill=g("out-bill").value.trim();
+  var vs=g("out-veh").value, vc=g("out-veh-c").value.trim(), veh=(vs==="__oth__")?vc:vs;
+  if(!who)  {showMsg("Select who is entering this","err");return;}
+  if(!party){showMsg("Enter party/site name","err");return;}
+  if(!bill) {showMsg("Enter bill/challan number","err");return;}
+  if(!veh)  {showMsg("Select or enter vehicle number","err");return;}
+  var t=ts(),add=[];
+  g("out-rows").querySelectorAll(".mr").forEach(function(row){
+    var tv=row.querySelector("[data-k='typ']").value;
+    var qty=row.querySelector("[data-k='qty']").value.trim();
+    if(!tv||!qty)return;
+    var to=DT.filter(function(x){return x.hi===tv;})[0];
+    var isO=(tv==="अन्य (Other)"),ten=isO?"Other":(to?to.en:tv);
+    var di=row.querySelector("[data-k='des-c']").value.trim();
+    var ds=row.querySelector("[data-k='des']").value;
+    var des=isO?di:(ds==="__oth__"?di:ds);
+    var hs=row.querySelector("[data-k='thk']").value, hc=row.querySelector("[data-k='thk-c']").value.trim();
+    var cs=row.querySelector("[data-k='col']").value, cc=row.querySelector("[data-k='col-c']").value.trim();
+    add.push({id:uid(),date:t.date,time:t.time,enteredBy:who,partyName:party,billNo:bill,vehicleNo:veh,
+      dispatchedMaterial:ten,designName:des,thickness:(hs==="Other")?hc:hs,
+      color:(cs==="Other")?cc:cs,materialQuantity:Number(qty)});
+  });
+  if(!add.length){showMsg("Each material needs type & quantity","err");return;}
+  outR=outR.concat(add);sl();upd();
+  var btn=g("out-savb");btn.disabled=true;btn.innerHTML="<span class='spin'></span> Saving…";
+  /* Outward column headers */
+  var OH=["Date","Time","Entered By","Party Name","Bill/Challan Number","Vehicle No.",
+          "Dispatched Material","Design Name","Thickness","Color","Material Quantity"];
+  var rowData=add.map(function(r){
+    return[r.date,r.time,r.enteredBy,r.partyName,r.billNo,r.vehicleNo,
+           r.dispatchedMaterial,r.designName,r.thickness,r.color,r.materialQuantity];
+  });
+  /* KEY CHANGE: pushDispatch sends to both "Outward" AND "Dispatch - <who>" tabs */
+  await pushDispatch(who, OH, rowData);
+  btn.disabled=false;btn.innerHTML="&#10003; Save Dispatch Entry";
+  g("out-who").value="";g("out-party").value="";g("out-bill").value="";
+  g("out-veh").value="";g("out-veh-c").style.display="none";
+  g("out-rows").innerHTML="";outN=0;addOutRow();
+  showMsg("&#10003; "+add.length+" dispatch entr"+(add.length>1?"ies":"y")+" saved");
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 10 — RECORDS VIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function goRec(v){
+  recV=v;
+  g("rb-in").className ="tog"+(v==="inward"   ?" on":" off");
+  g("rb-out").className="tog"+(v==="dispatch" ?" on":" off");
+  g("rt-in").style.display =(v==="inward")  ?"":"none";
+  g("rt-out").style.display=(v==="dispatch")?"":"none";
+}
+function xe(s){if(s==null||s==="")return "<span class='da'>—</span>";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function bdg(t){var c=(t==="Machine Made")?"bm":(t==="Rubber Moulded")?"br":"bo";return "<span class='bdg "+c+"'>"+xe(t)+"</span>";}
+function renderRec(){
+  var inD=g("rt-in");
+  if(!inR.length){inD.innerHTML="<div class='emp'><div class='empi'>📭</div><p style='font-weight:600'>No inward entries yet</p></div>";}
+  else{
+    var rows=inR.slice().reverse().map(function(r){
+      return "<tr><td>"+xe(r.date)+"</td><td>"+xe(r.time)+"</td><td><b>"+xe(r.supplierName)+"</b></td>"+
+      "<td>"+xe(r.billNo)+"</td><td>"+xe(r.materialName)+"</td><td>"+xe(r.vehicleNo)+"</td>"+
+      "<td class='qi'>"+r.quantity+"</td>"+
+      "<td><button class='delb' onclick=\"delIn('"+r.id+"')\">🗑</button></td></tr>";
+    }).join("");
+    inD.innerHTML="<div class='tw'><table><thead><tr><th>Date</th><th>Time</th><th>Supplier</th>"+
+      "<th>Bill No.</th><th>Material</th><th>Vehicle</th><th>Qty</th><th></th></tr></thead><tbody>"+rows+"</tbody></table></div>";
+  }
+  var outD=g("rt-out");
+  if(!outR.length){outD.innerHTML="<div class='emp'><div class='empi'>📭</div><p style='font-weight:600'>No dispatch entries yet</p></div>";}
+  else{
+    var orows=outR.slice().reverse().map(function(r){
+      return "<tr><td>"+xe(r.date)+"</td><td>"+xe(r.time)+"</td><td><b>"+xe(r.enteredBy)+"</b></td>"+
+      "<td>"+xe(r.partyName)+"</td><td>"+xe(r.billNo)+"</td><td>"+xe(r.vehicleNo)+"</td>"+
+      "<td>"+bdg(r.dispatchedMaterial)+"</td><td>"+xe(r.designName)+"</td>"+
+      "<td>"+xe(r.thickness)+"</td><td>"+xe(r.color)+"</td><td class='qo'>"+r.materialQuantity+"</td>"+
+      "<td><button class='delb' onclick=\"delOut('"+r.id+"')\">🗑</button></td></tr>";
+    }).join("");
+    outD.innerHTML="<div class='tw'><table><thead><tr><th>Date</th><th>Time</th><th>By</th><th>Party</th>"+
+      "<th>Bill No.</th><th>Vehicle</th><th>Type</th><th>Design</th><th>Thickness</th><th>Color</th><th>Qty</th><th></th></tr></thead>"+
+      "<tbody>"+orows+"</tbody></table></div>";
+  }
+  goRec(recV);
+}
+function delIn(id){if(!confirm("Delete?"))return;inR=inR.filter(function(r){return r.id!==id;});sl();upd();renderRec();showMsg("Deleted","inf");}
+function delOut(id){if(!confirm("Delete?"))return;outR=outR.filter(function(r){return r.id!==id;});sl();upd();renderRec();showMsg("Deleted","inf");}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 11 — EXCEL EXPORT
+   Inward + Outward (combined) + one sheet per person
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+function exportExcel(){
+  if(!inR.length&&!outR.length){showMsg("No records to export","err");return;}
+  if(typeof XLSX==="undefined"){showMsg("SheetJS not loaded — needs internet","err");return;}
+  var wb=XLSX.utils.book_new();
+  var OH=["Date","Time","Entered By","Party Name","Bill/Challan Number","Vehicle No.",
+          "Dispatched Material","Design Name","Thickness","Color","Material Quantity"];
+  var OW=[12,10,14,24,18,16,18,20,13,14,14].map(function(w){return{wch:w};});
+  /* Inward sheet */
+  var wi=XLSX.utils.aoa_to_sheet(
+    [["Date","Month","Time","Supplier Name","Bill/Challan No.","Material Name","Vehicle No.","Quantity"]]
+    .concat(inR.map(function(r){return[r.date,r.month,r.time,r.supplierName,r.billNo,r.materialName,r.vehicleNo,r.quantity];})));
+  wi["!cols"]=[13,12,10,18,16,18,16,10].map(function(w){return{wch:w};});
+  XLSX.utils.book_append_sheet(wb,wi,"Inward");
+  /* Outward combined */
+  var wo=XLSX.utils.aoa_to_sheet([OH].concat(outR.map(function(r){
+    return[r.date,r.time,r.enteredBy,r.partyName,r.billNo,r.vehicleNo,r.dispatchedMaterial,r.designName,r.thickness,r.color,r.materialQuantity];
+  })));
+  wo["!cols"]=OW;
+  XLSX.utils.book_append_sheet(wb,wo,"Outward");
+  /* Per-person sheets */
+  PEOPLE.forEach(function(name){
+    var recs=outR.filter(function(r){return r.enteredBy===name;});
+    if(!recs.length)return;
+    var ws=XLSX.utils.aoa_to_sheet([OH].concat(recs.map(function(r){
+      return[r.date,r.time,r.enteredBy,r.partyName,r.billNo,r.vehicleNo,r.dispatchedMaterial,r.designName,r.thickness,r.color,r.materialQuantity];
+    })));
+    ws["!cols"]=OW;
+    XLSX.utils.book_append_sheet(wb,ws,("Dispatch - "+name).slice(0,31));
+  });
+  XLSX.writeFile(wb,"Helix_Register_"+new Date().toISOString().slice(0,10)+".xlsx");
+  showMsg("Excel exported!");
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SECTION 12 — INIT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+window.onload = function(){
+  /* Apps Script code — now includes routing for per-person dispatch sheets.
+     The script receives { sheet, headers, rows } and appends to that tab.
+     Calling it multiple times (for "Outward" and "Dispatch - Mukesh") is safe —
+     each call creates the tab if it doesn't exist, then appends. */
+  g("codebox").textContent =
+    'function doPost(e) {\n'+
+    '  var ss   = SpreadsheetApp.openById("1C4heyLELF7CJsFqC-c53SJwcpIxQPBZm6EYdjBl-cdg");\n'+
+    '  var data = JSON.parse(e.postData.contents);\n'+
+    '\n'+
+    '  // Get or create the tab with the exact name sent from the app\n'+
+    '  // For dispatch this will be called twice:\n'+
+    '  //   once for "Outward" and once for "Dispatch - Mukesh" (or whoever)\n'+
+    '  var sheet = ss.getSheetByName(data.sheet);\n'+
+    '  if (!sheet) sheet = ss.insertSheet(data.sheet);\n'+
+    '\n'+
+    '  // Add header row with dark styling if the sheet is brand new\n'+
+    '  if (sheet.getLastRow() === 0) {\n'+
+    '    sheet.appendRow(data.headers);\n'+
+    '    var h = sheet.getRange(1, 1, 1, data.headers.length);\n'+
+    '    h.setFontWeight("bold").setBackground("#1a1a2e").setFontColor("#ffffff");\n'+
+    '    sheet.setFrozenRows(1);\n'+
+    '    sheet.setColumnWidths(1, data.headers.length, 140);\n'+
+    '  }\n'+
+    '\n'+
+    '  // Append each data row\n'+
+    '  data.rows.forEach(function(r) { sheet.appendRow(r); });\n'+
+    '\n'+
+    '  return ContentService\n'+
+    '    .createTextOutput(JSON.stringify({ status: "ok", added: data.rows.length }))\n'+
+    '    .setMimeType(ContentService.MimeType.JSON);\n'+
+    '}\n\n'+
+    'function doGet(e) {\n'+
+    '  return ContentService\n'+
+    '    .createTextOutput(JSON.stringify({ status: "ready" }))\n'+
+    '    .setMimeType(ContentService.MimeType.JSON);\n'+
+    '}';
+
+  /* Show mobile cfg button on small screens */
+  if(window.innerWidth<=700) g("mob-cfg").style.display="block";
+
+  upd();
+  addOutRow();
+  syncSt(scUrl?"ok":"loc");
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PWA: SERVICE WORKER REGISTRATION
+     Registers sw.js so the app can work offline.
+     The service worker downloads and caches all app
+     files on first visit, then serves them from cache
+     on every subsequent visit — even without internet.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js")
+      .then(function(reg) {
+        console.log("[PWA] Service Worker registered. Scope:", reg.scope);
+      })
+      .catch(function(err) {
+        console.warn("[PWA] Service Worker registration failed:", err);
+      });
+  }
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PWA: INSTALL PROMPT
+     On Android/Chrome, the browser fires this event
+     when the app is eligible to be installed.
+     We capture it and show our custom install banner.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  var deferredPrompt = null;
+  window.addEventListener("beforeinstallprompt", function(e) {
+    /* Prevent the browser's default mini-infobar from appearing */
+    e.preventDefault();
+    deferredPrompt = e;
+    /* Show our custom install banner after a short delay */
+    setTimeout(function() {
+      var banner = g("install-banner");
+      banner.style.display = "flex";
+    }, 2000);
+  });
+
+  /* When user taps our "Install" button */
+  g("install-btn").addEventListener("click", function() {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt(); /* show the browser's native install dialog */
+    deferredPrompt.userChoice.then(function(choice) {
+      if (choice.outcome === "accepted") {
+        console.log("[PWA] User accepted install");
+        showMsg("App installed! Open from your home screen anytime.", "inf");
+      }
+      deferredPrompt = null;
+      g("install-banner").style.display = "none";
+    });
+  });
+
+  /* Hide banner if app is already installed and opened as standalone */
+  if (window.matchMedia("(display-mode: standalone)").matches) {
+    /* Running as installed PWA — no need to show install prompt */
+    var banner = g("install-banner");
+    if (banner) banner.style.display = "none";
+  }
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PWA: OFFLINE / ONLINE DETECTION
+     Shows a red bar at the top when the user goes
+     offline. Hides it when connectivity is restored.
+     Note: Google Sheets sync will fail while offline
+     but all data is safely saved locally first.
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  function updateOnlineStatus() {
+    var bar = g("offline-bar");
+    if (navigator.onLine) {
+      bar.style.display = "none";
+      /* If we have a Sheets URL, update the sync status dot */
+      if (scUrl) syncSt("ok");
+    } else {
+      bar.style.display = "block";
+      syncSt("err");
+    }
+  }
+  window.addEventListener("online",  updateOnlineStatus);
+  window.addEventListener("offline", updateOnlineStatus);
+  updateOnlineStatus(); /* check status on startup */
+};
+</script>
+</body>
+</html>
