@@ -1,152 +1,192 @@
 /*
-  ╔════════════════════════════════════════════════════════╗
-  ║  HELIX FACTORY PWA — SERVICE WORKER                    ║
-  ║                                                        ║
-  ║  This file runs in the background in the browser and   ║
-  ║  makes the app work even when there's no internet.     ║
-  ║                                                        ║
-  ║  HOW IT WORKS:                                         ║
-  ║  1. On first load, it saves (caches) all the app       ║
-  ║     files to the device storage.                       ║
-  ║  2. On every subsequent load, it serves those cached   ║
-  ║     files instantly — no internet needed.              ║
-  ║  3. When internet IS available, it fetches fresh files ║
-  ║     from the server (SheetJS CDN, etc.) and updates   ║
-  ║     the cache silently in the background.              ║
-  ║                                                        ║
-  ║  DATA SYNC still requires internet — the offline       ║
-  ║  mode only means the UI always opens and works for     ║
-  ║  form-filling and local record browsing.               ║
-  ╚════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════╗
+║  HELIX INDUSTRIES — SERVICE WORKER  (sw.js)                         ║
+║                                                                      ║
+║  WHAT IS A SERVICE WORKER?                                           ║
+║  Think of it as a silent helper that runs in the background of      ║
+║  your browser. It has two main jobs:                                 ║
+║                                                                      ║
+║  1. OFFLINE CACHING                                                  ║
+║     The first time anyone opens the app, this worker downloads      ║
+║     and saves all the app files to the device. After that, the      ║
+║     app opens instantly — even without internet.                     ║
+║                                                                      ║
+║  2. MAKING THE APP INSTALLABLE                                       ║
+║     Having a service worker is one of the requirements for          ║
+║     Chrome to offer "Add to Home Screen" on Android.                ║
+║                                                                      ║
+║  IMPORTANT:                                                          ║
+║  Service workers only work over HTTPS (secure connections).         ║
+║  If you open index.html directly from your computer as a            ║
+║  file:// URL, the service worker will NOT activate. You must        ║
+║  host the files on a web server (GitHub Pages, Netlify, etc.)       ║
+║                                                                      ║
+║  HOW TO UPDATE THE APP:                                              ║
+║  If you make changes to index.html or any other file, you must      ║
+║  also bump the cache version below (e.g. v1 → v2).                 ║
+║  This forces all users' browsers to download the fresh files.       ║
+╚══════════════════════════════════════════════════════════════════════╝
 */
 
-/* Cache name — bump the version (v2, v3…) whenever you update the app files
-   so that old cached files get replaced with fresh ones automatically */
-var CACHE_NAME = "helix-register-v1";
+/* ─── CACHE VERSION ─────────────────────────────────────────────────
+   Change this string (e.g. "helix-v2") every time you update the app.
+   Old caches with different names get automatically deleted below.
+──────────────────────────────────────────────────────────────────── */
+var CACHE_NAME = "helix-v10";
 
-/* Files to pre-cache during install so the app works fully offline.
-   All paths are relative to the folder where this sw.js file lives. */
-var PRECACHE_FILES = [
+/* ─── FILES TO PRE-CACHE ────────────────────────────────────────────
+   These files are downloaded and saved to the device on first visit.
+   All paths are relative to the folder where sw.js lives.
+   index.html is the entire app. manifest.json + icons = PWA identity.
+──────────────────────────────────────────────────────────────────── */
+var PRECACHE = [
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png"
 ];
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   INSTALL EVENT — runs once when the service worker is
-   first registered. Downloads and caches all app files.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   INSTALL EVENT
+   Fires once when the service worker is first registered.
+   Downloads all pre-cache files and stores them on the device.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 self.addEventListener("install", function(event) {
-  console.log("[SW] Installing Helix Factory PWA v1…");
+  console.log("[Helix SW] Installing… cache:", CACHE_NAME);
   event.waitUntil(
-    caches.open(CACHE_NAME).then(function(cache) {
-      console.log("[SW] Pre-caching app files…");
-      return cache.addAll(PRECACHE_FILES);
-    }).then(function() {
-      /* Skip the waiting phase so the new SW activates immediately */
-      return self.skipWaiting();
-    })
+    caches.open(CACHE_NAME)
+      .then(function(cache) {
+        console.log("[Helix SW] Caching app files…");
+        return cache.addAll(PRECACHE);
+      })
+      .then(function() {
+        /* Skip waiting: activate the new service worker immediately
+           instead of waiting for old tabs to be closed first. */
+        return self.skipWaiting();
+      })
+      .catch(function(err) {
+        /* Pre-caching failed — this usually means one of the files
+           listed in PRECACHE above doesn't exist or couldn't be fetched.
+           The app will still work but won't be offline-capable. */
+        console.error("[Helix SW] Pre-cache failed:", err);
+      })
   );
 });
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   ACTIVATE EVENT — runs after install. Deletes old caches
-   from previous versions so storage doesn't fill up.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ACTIVATE EVENT
+   Fires after install, once the old service worker (if any) is gone.
+   Cleans up any caches from old versions.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 self.addEventListener("activate", function(event) {
-  console.log("[SW] Activating…");
+  console.log("[Helix SW] Activating…");
   event.waitUntil(
+    /* Get a list of all caches currently stored on this device */
     caches.keys().then(function(cacheNames) {
       return Promise.all(
-        cacheNames.map(function(cacheName) {
-          /* Delete any cache that isn't the current version */
-          if (cacheName !== CACHE_NAME) {
-            console.log("[SW] Deleting old cache:", cacheName);
-            return caches.delete(cacheName);
+        cacheNames.map(function(name) {
+          /* Delete any cache that has a different name than our current version */
+          if (name !== CACHE_NAME) {
+            console.log("[Helix SW] Deleting old cache:", name);
+            return caches.delete(name);
           }
         })
       );
     }).then(function() {
-      /* Take control of all open tabs immediately */
+      /* Take control of all open browser tabs immediately */
       return self.clients.claim();
     })
   );
 });
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   FETCH EVENT — intercepts every network request the app
-   makes and decides: serve from cache or fetch live.
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   FETCH EVENT
+   Fires every time the app makes any network request.
+   We intercept each request and decide how to respond.
 
-   Strategy used: Cache-First for app files, Network-First
-   for external resources (SheetJS CDN, Google Sheets API).
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   STRATEGY USED:
+   ┌─────────────────────────────────────────────────────────┐
+   │ Google Sheets / Google APIs → NETWORK ONLY              │
+   │   (live data — must go to internet, never cached)       │
+   │                                                         │
+   │ SheetJS CDN → NETWORK FIRST, fall back to cache         │
+   │   (try to get latest, use cached if offline)            │
+   │                                                         │
+   │ App files (index.html, icons etc.) → CACHE FIRST        │
+   │   (instant load from cache, update cache in background) │
+   └─────────────────────────────────────────────────────────┘
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 self.addEventListener("fetch", function(event) {
   var url = event.request.url;
 
-  /* ── NETWORK-ONLY: Google Sheets API calls ──
-     These MUST go to the network — there's no point caching live data.
-     If offline, they will fail gracefully (the app shows "Sync Failed"). */
+  /* ── CASE 1: Google Sheets / Apps Script calls ──
+     These are the actual data sync requests. They MUST reach the internet.
+     If offline, they will fail — but the app saves data locally first,
+     so no data is ever lost. */
   if (url.includes("script.google.com") || url.includes("googleapis.com")) {
+    /* Just pass straight through to the network — no caching involved */
     event.respondWith(fetch(event.request));
     return;
   }
 
-  /* ── NETWORK-FIRST: External CDN files (SheetJS) ──
-     Try to get the latest version online; fall back to cache if offline. */
-  if (url.includes("cdn.sheetjs.com") || url.includes("cdnjs.cloudflare.com")) {
+  /* ── CASE 2: Google Fonts ──
+     Try network first. Cache for offline if successful. */
+  if (url.includes("fonts.googleapis.com") || url.includes("fonts.gstatic.com")) {
     event.respondWith(
       fetch(event.request)
         .then(function(response) {
-          /* Save fresh copy to cache for next offline use */
+          /* Save a copy to cache for offline use */
           var clone = response.clone();
-          caches.open(CACHE_NAME).then(function(cache) {
-            cache.put(event.request, clone);
-          });
+          caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
           return response;
         })
         .catch(function() {
-          /* Offline — serve from cache (even if slightly old) */
+          /* Offline — serve from cache (fonts degrade gracefully without them) */
           return caches.match(event.request);
         })
     );
     return;
   }
 
-  /* ── CACHE-FIRST: All local app files ──
-     Serve from cache instantly. Also fetch from network in background
-     and update the cache (stale-while-revalidate pattern). */
+  /* ── CASE 3: SheetJS CDN (Excel export library) ──
+     Network first for freshness, cache as fallback if offline. */
+  if (url.includes("cdn.sheetjs.com") || url.includes("cdnjs.cloudflare.com")) {
+    event.respondWith(
+      fetch(event.request)
+        .then(function(response) {
+          var clone = response.clone();
+          caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
+          return response;
+        })
+        .catch(function() {
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  /* ── CASE 4: App files (index.html, manifest, icons) ──
+     Cache-first: serve from local cache instantly (very fast).
+     Also fetch from network in background and silently update the cache.
+     This is called "stale-while-revalidate". */
   event.respondWith(
     caches.match(event.request).then(function(cachedResponse) {
-      /* Kick off a background fetch to keep the cache fresh */
-      var fetchPromise = fetch(event.request).then(function(networkResponse) {
+      /* Background fetch to keep cache fresh */
+      var networkFetch = fetch(event.request).then(function(networkResponse) {
         if (networkResponse && networkResponse.status === 200) {
           var clone = networkResponse.clone();
-          caches.open(CACHE_NAME).then(function(cache) {
-            cache.put(event.request, clone);
-          });
+          caches.open(CACHE_NAME).then(function(cache) { cache.put(event.request, clone); });
         }
         return networkResponse;
       }).catch(function() {
-        /* Network error — that's fine, we're serving from cache anyway */
+        /* Network error — silently ignore, we're serving from cache */
       });
 
-      /* Return cache immediately if available, else wait for network */
-      return cachedResponse || fetchPromise;
+      /* Return cached version immediately if available;
+         otherwise wait for the network response */
+      return cachedResponse || networkFetch;
     })
   );
 });
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   SYNC EVENT — handles background sync when connectivity
-   is restored. Future enhancement: offline queue of failed
-   Sheets pushes could be replayed here.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-self.addEventListener("sync", function(event) {
-  if (event.tag === "sync-sheets") {
-    console.log("[SW] Background sync triggered — connectivity restored");
-    /* Background sync logic can be added here in a future version */
-  }
-});
-
-console.log("[SW] Helix Factory Service Worker loaded.");
+console.log("[Helix SW] Service worker script loaded. Cache:", CACHE_NAME);
