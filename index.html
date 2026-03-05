@@ -1741,7 +1741,7 @@ function addInRow() {
         "<select class='inp' data-k='veh' onchange='onVehChgIn(this)'>" +
           "<option value=''>— Select —</option>" + vopt +
         "</select>" +
-        "<input class='inp mt6' data-k='veh-c' placeholder='Enter vehicle no.' style='display:none'/></div>" +
+        "<input class='inp mt6' data-k='veh-c' placeholder='e.g. RJ 19 GG 2398' style='display:none'/></div>" +
       "<div><label class='lbl'>Bill / Challan No.</label>" +
         "<input class='inp' placeholder='Optional' data-k='bil'/></div>" +
     "</div>";
@@ -1753,7 +1753,16 @@ function addInRow() {
 /* Show free-text when "Other (type)" chosen in material dropdown */
 function onMatChg(s) { s.nextElementSibling.style.display = (s.value === "__oth__") ? "" : "none"; }
 /* Show free-text when "Other" chosen in inward vehicle dropdown */
-function onVehChgIn(s) { s.nextElementSibling.style.display = (s.value === "__oth__") ? "" : "none"; }
+function onVehChgIn(s) {
+  var inp = s.nextElementSibling;  /* the free-text input right after the select */
+  inp.style.display = (s.value === "__oth__") ? "" : "none";
+  if (s.value === "__oth__") {
+    /* Auto-uppercase while typing */
+    inp.oninput = function() { this.value = this.value.toUpperCase(); };
+    /* Normalise to "RJ 19 GG 2398" format when user leaves the field */
+    inp.onblur  = function() { this.value = normaliseVeh(this.value); };
+  }
+}
 /* Remove a material row */
 function remIn(id) { g(id).remove(); refreshIn(); }
 /* Hide the remove button when only one row remains */
