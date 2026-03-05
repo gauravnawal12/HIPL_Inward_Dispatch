@@ -1088,7 +1088,7 @@ tr:hover td { background: rgba(247,184,16,.04); }
                 <option value="__oth__">Other</option>
               </select>
               <!-- Shows when "Other" is selected above -->
-              <input class="inp" id="out-veh-c" placeholder="Vehicle number" style="display:none;flex:1"/>
+              <input class="inp" id="out-veh-c" placeholder="e.g. RJ 19 GG 2398" style="display:none;flex:1" onblur="onVehCInput()" oninput="this.value=this.value.toUpperCase()"/>
             </div>
           </div>
 
@@ -1829,6 +1829,41 @@ function onVehChg() {
   g("out-veh-c").style.display = (g("out-veh").value === "__oth__") ? "" : "none";
 }
 
+/* Normalise a vehicle number to the standard format: "RJ 19 GG 2398"
+   Rules:
+     1. Uppercase everything
+     2. Strip all spaces, then re-insert them at the correct positions:
+        - 2 letters  (state code  e.g. RJ)
+        - 2 digits   (district    e.g. 19)
+        - 2 letters  (series      e.g. GG)
+        - 4 digits   (number      e.g. 2398)
+   If the input doesn't match that pattern we return it uppercased but
+   otherwise unchanged so we never silently corrupt a valid custom entry.
+
+   Examples:
+     "rj19gg2398"   → "RJ 19 GG 2398"
+     "Rj 19 Gg2398" → "RJ 19 GG 2398"
+     "RJ19GG2398"   → "RJ 19 GG 2398"  */
+function normaliseVeh(v) {
+  if (!v) return v;
+  /* Step 1: uppercase and strip all spaces */
+  var s = v.toUpperCase().replace(/\s+/g, "");
+  /* Step 2: match the Indian vehicle number pattern */
+  var m = s.match(/^([A-Z]{2})(\d{2})([A-Z]{1,3})(\d{1,4})$/);
+  if (m) {
+    /* Pad series to fixed width isn't needed — just rejoin with spaces */
+    return m[1] + " " + m[2] + " " + m[3] + " " + m[4];
+  }
+  /* Doesn't match pattern — return uppercased version unchanged */
+  return s;
+}
+
+/* Called when user leaves the free-text vehicle field — normalise on blur */
+function onVehCInput() {
+  var el = g("out-veh-c");
+  el.value = normaliseVeh(el.value);
+}
+
 /* Add one blank material row to the Dispatch form.
    Each row: Machine → Product, Thickness, Color, Quantity */
 function addOutRow() {
@@ -1937,7 +1972,8 @@ async function submitOut() {
   var bill  = g("out-bill").value.trim();
   var vs    = g("out-veh").value;
   var vc    = g("out-veh-c").value.trim();
-  var veh   = (vs === "__oth__") ? vc : vs;
+  /* Normalise free-text vehicle to "RJ 19 GG 2398" format at save time */
+  var veh   = (vs === "__oth__") ? normaliseVeh(vc) : vs;
 
   if (!who)   { showMsg("Select who is entering this","err");  return; }
   if (!party) { showMsg("Enter party/site name","err");         return; }
@@ -2258,106 +2294,7 @@ window.onload = function() {
      This is the code the user must paste into their Google Sheet's
      Apps Script editor to enable the cloud sync feature.
      It creates/appends to sheet tabs by name on every POST call. */
-  g("codebox").textContent =
-    'function doPost(e) {\n' +
-    '  var ss   = SpreadsheetApp.openById(\"1C4heyLELF7CJsFqC-c53SJwcpIxQPBZm6EYdjBl-cdg\");\n' +
-    '  var data = JSON.parse(e.postData.contents);\n' +
-    '\n' +
-    '  // ── Test ping ──\n' +
-    '  if (data.testOnly) {\n' +
-    '    return ContentService\n' +
-    '      .createTextOutput(JSON.stringify({status:\"ok\",test:true}))\n' +
-    '      .setMimeType(ContentService.MimeType.JSON);\n' +
-    '  }\n' +
-    '\n' +
-    '  // ── Write rows to the named sheet ──\n' +
-    '  var sheet = ss.getSheetByName(data.sheet);\n' +
-    '  if (!sheet) sheet = ss.insertSheet(data.sheet);\n' +
-    '\n' +
-    '  if (sheet.getLastRow() === 0) {\n' +
-    '    sheet.appendRow(data.headers);\n' +
-    '    var h0 = sheet.getRange(1, 1, 1, data.headers.length);\n' +
-    '    h0.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n' +
-    '    sheet.setFrozenRows(1);\n' +
-    '    sheet.setColumnWidths(1, data.headers.length, 140);\n' +
-    '  }\n' +
-    '\n' +
-    '  data.rows.forEach(function(r) { sheet.appendRow(r); });\n' +
-    '\n' +
-    '  // ── Sort by date after appending (Combined sheet) ──\n' +
-    '  if (data.sortByDate && sheet.getLastRow() > 2) {\n' +
-    '    sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn())\n' +
-    '         .sort({column:1, ascending:true});\n' +
-    '  }\n' +
-    '\n' +
-    '  // ── Rebuild Daily Summary in the SAME call ──\n' +
-    '  var summaryRowCount = 0;\n' +
-    '  if (data.rebuildSummaryAfter) {\n' +
-    '    var src = ss.getSheetByName(\"Combined\");\n' +
-    '    var dst = ss.getSheetByName(\"Daily Summary\");\n' +
-    '    if (!dst) dst = ss.insertSheet(\"Daily Summary\");\n' +
-    '\n' +
-    '    var SH = [\"Date\",\"Machine\",\"Product\",\"Thickness\",\"Color\",\"Total Dispatched\"];\n' +
-    '    dst.clearContents();\n' +
-    '\n' +
-    '    if (src && src.getLastRow() > 1) {\n' +
-    '      var nRows = src.getLastRow() - 1;\n' +
-    '      var nCols = src.getLastColumn();\n' +
-    '      var vals  = src.getRange(2, 1, nRows, nCols).getValues();\n' +
-    '      var tz    = Session.getScriptTimeZone();\n' +
-    '      var tot   = {};\n' +
-    '\n' +
-    '      vals.forEach(function(row) {\n' +
-    '        var d = row[0];\n' +
-    '        var ds = (d instanceof Date && !isNaN(d))\n' +
-    '                 ? Utilities.formatDate(d, tz, \"dd/MM/yyyy\")\n' +
-    '                 : String(d).trim();\n' +
-    '        var mac = String(row[6]||\"\").trim();\n' +
-    '        var pro = String(row[7]||\"\").trim();\n' +
-    '        var thk = String(row[8]||\"\").trim();\n' +
-    '        var col = String(row[9]||\"\").trim();\n' +
-    '        var qty = Number(row[10])||0;\n' +
-    '        if (!mac || !ds) return;\n' +
-    '        var k = ds+\"|\"+mac+\"|\"+pro+\"|\"+thk+\"|\"+col;\n' +
-    '        tot[k] = (tot[k]||0) + qty;\n' +
-    '      });\n' +
-    '\n' +
-    '      var sRows = Object.keys(tot).map(function(k){\n' +
-    '        var p=k.split(\"|\");\n' +
-    '        return [p[0],p[1],p[2],p[3],p[4],tot[k]];\n' +
-    '      }).sort(function(a,b){\n' +
-    '        function pd(s){var p=String(s).split(\"/\");return p.length===3?new Date(p[2],p[1]-1,p[0]):new Date(0);}\n' +
-    '        var d=pd(a[0])-pd(b[0]);\n' +
-    '        return d!==0?d:String(a[1]).localeCompare(String(b[1]));\n' +
-    '      });\n' +
-    '\n' +
-    '      var out = [SH].concat(sRows);\n' +
-    '      dst.getRange(1, 1, out.length, SH.length).setValues(out);\n' +
-    '      summaryRowCount = sRows.length;\n' +
-    '    } else {\n' +
-    '      dst.appendRow(SH);\n' +
-    '    }\n' +
-    '\n' +
-    '    var h1 = dst.getRange(1, 1, 1, SH.length);\n' +
-    '    h1.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n' +
-    '    dst.setFrozenRows(1);\n' +
-    '    dst.setColumnWidths(1, SH.length, 140);\n' +
-    '  }\n' +
-    '\n' +
-    '  return ContentService\n' +
-    '    .createTextOutput(JSON.stringify({\n' +
-    '      status: \"ok\",\n' +
-    '      added: data.rows.length,\n' +
-    '      summaryRows: summaryRowCount\n' +
-    '    }))\n' +
-    '    .setMimeType(ContentService.MimeType.JSON);\n' +
-    '}\n' +
-    '\n' +
-    'function doGet(e) {\n' +
-    '  return ContentService\n' +
-    '    .createTextOutput(JSON.stringify({status:\"ready\"}))\n' +
-    '    .setMimeType(ContentService.MimeType.JSON);\n' +
-    '}';
+  g("codebox").textContent = "function doPost(e) {\n  var ss   = SpreadsheetApp.openById(\"1C4heyLELF7CJsFqC-c53SJwcpIxQPBZm6EYdjBl-cdg\");\n  var data = JSON.parse(e.postData.contents);\n\n  if (data.testOnly) {\n    return ContentService\n      .createTextOutput(JSON.stringify({status:\"ok\",test:true}))\n      .setMimeType(ContentService.MimeType.JSON);\n  }\n\n  var sheet = ss.getSheetByName(data.sheet);\n  if (!sheet) sheet = ss.insertSheet(data.sheet);\n\n  if (sheet.getLastRow() === 0) {\n    sheet.appendRow(data.headers);\n    var h0 = sheet.getRange(1, 1, 1, data.headers.length);\n    h0.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n    sheet.setFrozenRows(1);\n    sheet.setColumnWidths(1, data.headers.length, 140);\n  }\n\n  data.rows.forEach(function(r) { sheet.appendRow(r); });\n\n  if (data.sortByDate && sheet.getLastRow() > 2) {\n    sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn())\n         .sort({column:1, ascending:true});\n  }\n\n  var summaryRowCount = 0;\n  if (data.rebuildSummaryAfter) {\n    var src = ss.getSheetByName(\"Combined\");\n    var dst = ss.getSheetByName(\"Daily Summary\");\n    if (!dst) dst = ss.insertSheet(\"Daily Summary\");\n\n    var SH = [\"Date\",\"Machine\",\"Product\",\"Thickness\",\"Color\",\"Total Dispatched\"];\n    dst.clearContents();\n\n    if (src && src.getLastRow() > 1) {\n      var nRows = src.getLastRow() - 1;\n      var nCols = src.getLastColumn();\n      var vals  = src.getRange(2, 1, nRows, nCols).getValues();\n      var tz    = Session.getScriptTimeZone();\n      var tot   = {};\n\n      vals.forEach(function(row) {\n        var d = row[0];\n        // Use dd-MM-yyyy (dashes) so Google Sheets does NOT auto-convert\n        // the string back into a Date object when written to the cell.\n        // Sheets only auto-converts slash-separated formats like dd/MM/yyyy.\n        var ds;\n        if (d instanceof Date && !isNaN(d)) {\n          ds = Utilities.formatDate(d, tz, \"dd-MM-yyyy\");\n        } else {\n          ds = String(d).trim().replace(/\\//g, \"-\");\n        }\n        var mac = String(row[6]||\"\").trim();\n        var pro = String(row[7]||\"\").trim();\n        var thk = String(row[8]||\"\").trim();\n        var col = String(row[9]||\"\").trim();\n        var qty = Number(row[10])||0;\n        if (!mac || !ds) return;\n        var k = ds+\"|\"+mac+\"|\"+pro+\"|\"+thk+\"|\"+col;\n        tot[k] = (tot[k]||0) + qty;\n      });\n\n      var sRows = Object.keys(tot).map(function(k){\n        var p = k.split(\"|\");\n        return [p[0], p[1], p[2], p[3], p[4], tot[k]];\n      }).sort(function(a,b){\n        function pd(s) {\n          var p = String(s).split(\"-\");\n          return p.length===3 ? new Date(p[2], p[1]-1, p[0]) : new Date(0);\n        }\n        var diff = pd(a[0]) - pd(b[0]);\n        return diff !== 0 ? diff : String(a[1]).localeCompare(String(b[1]));\n      });\n\n      var out = [SH].concat(sRows);\n      dst.getRange(1, 1, out.length, SH.length).setValues(out);\n      summaryRowCount = sRows.length;\n    } else {\n      dst.appendRow(SH);\n    }\n\n    var h1 = dst.getRange(1, 1, 1, SH.length);\n    h1.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n    dst.setFrozenRows(1);\n    dst.setColumnWidths(1, SH.length, 140);\n  }\n\n  return ContentService\n    .createTextOutput(JSON.stringify({\n      status: \"ok\",\n      added: data.rows.length,\n      summaryRows: summaryRowCount\n    }))\n    .setMimeType(ContentService.MimeType.JSON);\n}\n\nfunction doGet(e) {\n  return ContentService\n    .createTextOutput(JSON.stringify({status:\"ready\"}))\n    .setMimeType(ContentService.MimeType.JSON);\n}";
 
   /* ── Show mobile-only Sheets setup button ── */
   if (window.innerWidth <= 700) g("mob-cfg").style.display = "block";
