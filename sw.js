@@ -32,7 +32,7 @@
    Change this string (e.g. "helix-v2") every time you update the app.
    Old caches with different names get automatically deleted below.
 ──────────────────────────────────────────────────────────────────── */
-var CACHE_NAME = "helix-v10";
+var CACHE_NAME = "helix-v23";
 
 /* ─── FILES TO PRE-CACHE ────────────────────────────────────────────
    These files are downloaded and saved to the device on first visit.
@@ -62,12 +62,11 @@ self.addEventListener("install", function(event) {
       .then(function() {
         /* Skip waiting: activate the new service worker immediately
            instead of waiting for old tabs to be closed first. */
-        return self.skipWaiting();
+        // Do NOT call skipWaiting() here.
+        // We wait for the app to send SKIP_WAITING after the user taps "Update Now".
+        // This ensures the update banner is shown before the page reloads.
       })
       .catch(function(err) {
-        /* Pre-caching failed — this usually means one of the files
-           listed in PRECACHE above doesn't exist or couldn't be fetched.
-           The app will still work but won't be offline-capable. */
         console.error("[Helix SW] Pre-cache failed:", err);
       })
   );
@@ -187,6 +186,17 @@ self.addEventListener("fetch", function(event) {
       return cachedResponse || networkFetch;
     })
   );
+});
+
+/* ── Message listener ───────────────────────────────────────────────────────
+   The app sends { type: "SKIP_WAITING" } when the user taps "Update Now".
+   This tells the new SW to stop waiting and activate immediately,
+   which triggers a "controllerchange" event in the app → page reloads. */
+self.addEventListener("message", function(event) {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    console.log("[Helix SW] Skip waiting — activating new version now");
+    self.skipWaiting();
+  }
 });
 
 console.log("[Helix SW] Service worker script loaded. Cache:", CACHE_NAME);
