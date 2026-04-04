@@ -982,6 +982,7 @@ tr:hover td { background: rgba(247,184,16,.04); }
       <button onclick="saveUrl()"  style="background:var(--gold);color:#1a1a1a;font-weight:700">Save URL</button>
       <button onclick="testUrl()"  style="background:var(--green)">Test</button>
       <button onclick="diagnose()" style="background:#7c3aed;color:#fff;font-weight:700;padding:10px 16px;border:none;border-radius:var(--radius-md);font-family:var(--font-display);font-size:13px;min-height:44px">🔍 Diagnose</button>
+      <button onclick="manualSync()" id="sync-now-btn" style="background:#0ea5e9;color:#fff;font-weight:700;padding:10px 16px;border:none;border-radius:var(--radius-md);font-family:var(--font-display);font-size:13px;min-height:44px">📤 Sync Now</button>
     </div>
   </div>
 
@@ -1319,6 +1320,7 @@ var MONS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","D
 var IK = "hf_in_v5";   /* localStorage key for inward records  */
 var OK = "hf_out_v5";  /* localStorage key for dispatch records */
 var SK = "hf_sc";      /* localStorage key for the Sheets URL  */
+var QK = "hf_queue";   /* localStorage key for the sync queue  */
 
 /* Load saved data on startup. JSON.parse turns the saved text back into arrays. */
 var inR  = JSON.parse(localStorage.getItem(IK) || "[]");
@@ -1428,144 +1430,134 @@ function syncSt(s) {
    sheet   = name of the Google Sheet tab to write to
    headers = column headers (first row, created once if tab is new)
    rows    = array of data rows to append */
-async function pushOne(sheet, headers, rows) {
-  if (!scUrl || !rows.length) return;  /* skip if no URL configured */
-  var r = await fetch(scUrl, {
-    method: "POST",
-    /* "text/plain" avoids CORS preflight — Apps Script accepts this */
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify({ sheet: sheet, headers: headers, rows: rows })
-  });
-  var j = await r.json();
-  if (j.status !== "ok") throw new Error("Sheets rejected: " + sheet);
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SYNC QUEUE SYSTEM
+   ─────────────────────────────────────────────────────────────
+   Every Sheets write is first saved to a persistent queue in
+   localStorage. A background loop retries failed/pending items
+   every 30 seconds and also fires immediately when the device
+   comes back online. This guarantees zero missed entries even
+   if the user is offline, closes the app mid-sync, or the
+   network drops partway through a save.
+
+   Queue item shape:
+   { id, type ("inward"|"dispatch"), who, veh, headers, rows,
+     added (ISO timestamp), tries (attempt count), lastErr }
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* ── Queue helpers ── */
+function qLoad()     { try { return JSON.parse(localStorage.getItem(QK) || "[]"); } catch(e) { return []; } }
+function qSave(q)    { localStorage.setItem(QK, JSON.stringify(q)); }
+function qRemove(id) { qSave(qLoad().filter(function(x){ return x.id !== id; })); }
+
+function updateQueueBadge() {
+  var pending = qLoad().length;
+  var lbl = g("slbl"), dot = g("sdot");
+  if (pending > 0) {
+    lbl.textContent        = pending + " pending";
+    dot.style.background   = "#f7b810";
+    dot.style.animation    = "pulse 1s infinite";
+  }
 }
 
-/* Push inward entry — goes to the "Inward" tab only */
+/* ── Single HTTP attempt — throws on any failure ── */
+async function fetchPost(payload) {
+  var r = await fetch(scUrl, {
+    method: "POST", headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  var txt = await r.text();
+  var j;
+  try { j = JSON.parse(txt); } catch(ex) { throw new Error("Bad JSON: " + txt.slice(0,80)); }
+  if (j.status !== "ok") throw new Error("Script rejected: " + txt.slice(0,120));
+  return j;
+}
+
+/* ── Send one queued item to all required sheet tabs ── */
+async function syncItem(item) {
+  if (item.type === "inward") {
+    await fetchPost({ sheet: "Inward", headers: item.headers, rows: item.rows });
+  } else {
+    await fetchPost({ sheet: "Outward",              headers: item.headers, rows: item.rows });
+    await fetchPost({ sheet: "Dispatch - " + item.who, headers: item.headers, rows: item.rows });
+    var combinedRows = item.rows.filter(function(row) {
+      if (item.who === "Guard")  return false;
+      if (item.who === "Mukesh") return MUKESH_VEHICLES.indexOf(row[5]) === -1;
+      return true;
+    });
+    if (combinedRows.length > 0) {
+      var j = await fetchPost({
+        sheet: "Combined", headers: item.headers, rows: combinedRows,
+        sortByDate: true, rebuildSummaryAfter: true
+      });
+      if (j.summaryRows !== undefined) {
+        showMsg("✓ Synced — Daily Summary: " + j.summaryRows + " rows", "inf");
+      }
+    }
+  }
+}
+
+/* ── Main sync loop ── */
+var _syncing = false;
+async function runSyncQueue() {
+  if (_syncing || !scUrl || !navigator.onLine) return;
+  var q = qLoad();
+  if (!q.length) return;
+
+  _syncing = true;
+  syncSt("ing");
+
+  var anyFail = false;
+  for (var i = 0; i < q.length; i++) {
+    var item = q[i];
+    try {
+      await syncItem(item);
+      qRemove(item.id);
+    } catch(e) {
+      anyFail = true;
+      /* Update retry count in queue */
+      var qq = qLoad();
+      var ix = qq.findIndex(function(x){ return x.id === item.id; });
+      if (ix !== -1) { qq[ix].tries = (qq[ix].tries||0)+1; qq[ix].lastErr = e.message||String(e); qSave(qq); }
+    }
+  }
+
+  _syncing = false;
+
+  var remaining = qLoad().length;
+  if (remaining === 0) {
+    syncSt("ok");
+    g("slbl").textContent = "Synced";
+  } else {
+    syncSt("err");
+    updateQueueBadge();
+    showMsg(remaining + " entr" + (remaining>1?"ies":"y") + " pending — will retry automatically", "wrn");
+  }
+}
+
+/* ── Queue an inward entry then try to sync immediately ── */
 async function pushInward(rows) {
   if (!scUrl) return;
-  syncSt("ing");
-  try {
-    await pushOne("Inward",
-      ["Date","Month","Time","Supplier Name","Bill/Challan No.","Material Name","Vehicle No.","Quantity"],
-      rows);
-    syncSt("ok");
-  } catch(e) {
-    syncSt("err");
-    /* Show the actual error message so we can diagnose */
-    showMsg("Sync error: " + (e.message || e), "err");
-  }
+  var IH = ["Date","Month","Time","Supplier Name","Bill/Challan No.","Material Name","Vehicle No.","Quantity"];
+  var q = qLoad();
+  q.push({ id: uid(), type: "inward", headers: IH, rows: rows, added: new Date().toISOString(), tries: 0, lastErr: "" });
+  qSave(q);
+  updateQueueBadge();
+  runSyncQueue();
 }
 
-/* Push dispatch entry — goes to MULTIPLE tabs:
-   1. "Outward"         — master sheet, every dispatch entry from everyone
-   2. "Dispatch - Name" — personal sheet for whoever entered it
-   3. "Combined"        — filtered sheet (see rules), sorted by date
-   4. "Daily Summary"   — aggregated totals: Date + Machine + Product + Thickness + Color
-
-   COMBINED SHEET RULES:
-   - Every entry by Subhash goes here
-   - Every entry by Anandaram goes here
-   - Mukesh entries ONLY where vehicle is NOT in his own vehicles list
-   The Apps Script sorts Combined by date, then rebuilds Daily Summary from it. */
+/* ── Queue a dispatch entry then try to sync immediately ── */
 async function pushDispatch(who, headers, rows, veh) {
   if (!scUrl) return;
-  syncSt("ing");
-  try {
-    /* 1. Always: send to "Outward" master sheet (every dispatch, all people) */
-    await pushOne("Outward", headers, rows);
-
-    /* 2. Always: send to this person's personal sheet */
-    await pushOne("Dispatch - " + who, headers, rows);
-
-    /* 3. Combined sheet: filter rows by the Combined rules */
-    /* COMBINED SHEET RULES — who goes in:
-       - Guard : NEVER — Guard tab is for verification only
-       - Mukesh: only when vehicle is NOT one of his own (MUKESH_VEHICLES)
-       - Subhash, Anandaram: always included */
-    var combinedRows = rows.filter(function(row) {
-      if (who === "Guard") return false;          /* Guard never goes to Combined */
-      var rowVeh = row[5];                        /* column index 5 = Vehicle No. */
-      if (who === "Mukesh") {
-        return MUKESH_VEHICLES.indexOf(rowVeh) === -1;
-      }
-      return true; /* Subhash & Anandaram: always included */
-    });
-
-    /* 3. Push to Combined (filtered — Guard and Mukesh's own vehicles excluded) */
-    if (combinedRows.length > 0) {
-      await pushOneSorted("Combined", headers, combinedRows);
-    }
-
-    /* 4. Daily Summary is rebuilt inside pushOneSorted (rebuildSummaryAfter:true)
-          so it happens atomically on the server after Combined is updated.
-          No separate call needed — the combined write and summary rebuild
-          happen in the same Apps Script execution. */
-
-    syncSt("ok");
-  } catch(e) {
-    syncSt("err");
-    showMsg("Saved locally — Sheets sync failed","wrn");
-  }
+  var q = qLoad();
+  q.push({ id: uid(), type: "dispatch", who: who, veh: veh, headers: headers, rows: rows, added: new Date().toISOString(), tries: 0, lastErr: "" });
+  qSave(q);
+  updateQueueBadge();
+  runSyncQueue();
 }
 
-/* Ask Apps Script to rebuild the "Daily Summary" sheet from the Combined sheet.
-   Apps Script reads Combined, groups by Date+Machine+Product+Thickness+Color,
-   sums quantities, and writes the result to "Daily Summary" fresh each time.
-   We don't send any rows — the server does all the aggregation work. */
-async function pushSummary(summaryHeaders) {
-  if (!scUrl) return;
-  var r = await fetch(scUrl, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify({
-      sheet: "Daily Summary",
-      headers: summaryHeaders,
-      rows: [],
-      rebuildSummary: true
-    })
-  });
-  /* Parse response — show exactly what Apps Script returned for debugging */
-  var txt = await r.text();
-  var j;
-  try { j = JSON.parse(txt); } catch(ex) { j = {}; }
-  if (j.status === "ok") {
-    if (j.summaryRows > 0) {
-      showMsg("✓ Synced — Daily Summary: " + j.summaryRows + " rows updated", "inf");
-    }
-  } else {
-    showMsg("Sync error: " + txt.slice(0, 120), "err");
-    throw new Error("Sheets error: " + txt.slice(0, 120));
-  }
-}
 
-/* Like pushOne but tells Apps Script to sort by date column after appending.
-   Used only for the Combined sheet so it stays date-ordered at all times. */
-async function pushOneSorted(sheet, headers, rows) {
-  if (!scUrl || !rows.length) return;
-  var r = await fetch(scUrl, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    /* sortByDate:true + rebuildSummaryAfter:true — Apps Script will:
-       1. Append the rows to Combined
-       2. Sort Combined by date
-       3. Immediately rebuild Daily Summary from the now-updated Combined
-       All in one server-side transaction — no race condition. */
-    body: JSON.stringify({
-      sheet: sheet,
-      headers: headers,
-      rows: rows,
-      sortByDate: true,
-      rebuildSummaryAfter: true
-    })
-  });
-  var txt = await r.text();
-  var j;
-  try { j = JSON.parse(txt); } catch(ex) { j = {}; }
-  if (j.status !== "ok") throw new Error("Sheets rejected: " + sheet + " — " + txt.slice(0,100));
-  if (j.summaryRows !== undefined) {
-    showMsg("✓ Saved — Daily Summary: " + j.summaryRows + " rows", "inf");
-  }
-}
 
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1638,6 +1630,19 @@ async function diagnose() {
   } catch(e) { log("  FETCH ERROR: " + e.message); }
 
   log("\nDiagnosis complete. Share this output to debug the issue.");
+}
+
+async function manualSync() {
+  var q = qLoad();
+  if (!q.length) { showMsg("✓ Nothing pending — all entries synced", "inf"); return; }
+  if (!scUrl)    { showMsg("No Sheets URL configured", "err"); return; }
+  if (!navigator.onLine) { showMsg("No internet — will sync automatically when online", "wrn"); return; }
+  var btn = g("sync-now-btn");
+  btn.textContent = "Syncing…";
+  btn.disabled = true;
+  await runSyncQueue();
+  btn.textContent = "📤 Sync Now";
+  btn.disabled = false;
 }
 
 function testUrl() {
@@ -2356,12 +2361,29 @@ window.onload = function() {
      Hides it when connection is restored. */
   function checkOnline() {
     g("offline-bar").style.display = navigator.onLine ? "none" : "block";
-    if (!navigator.onLine) syncSt("err");
-    else if (scUrl) syncSt("ok");
+    if (!navigator.onLine) {
+      syncSt("err");
+    } else {
+      /* Back online — immediately flush any queued entries */
+      var pending = qLoad().length;
+      if (pending > 0) {
+        showMsg("Connection restored — syncing " + pending + " pending entr" + (pending>1?"ies":"y") + "…", "inf");
+        runSyncQueue();
+      } else if (scUrl) {
+        syncSt("ok");
+      }
+    }
   }
   window.addEventListener("online",  checkOnline);
   window.addEventListener("offline", checkOnline);
   checkOnline();
+
+  /* Retry any pending queue items every 30 seconds */
+  setInterval(runSyncQueue, 30000);
+
+  /* On startup: show badge and immediately try to sync any queued entries */
+  updateQueueBadge();
+  setTimeout(runSyncQueue, 2000);  /* slight delay so app finishes loading first */
 };
 
 </script>
