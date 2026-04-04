@@ -987,26 +987,7 @@ tr:hover td { background: rgba(247,184,16,.04); }
   </div>
 
 
-  <!-- UPDATE BANNER — shown when a new version of the app is available -->
-<div id="update-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;
-  background:#1e3a5f;color:#fff;padding:14px 20px;display:none;
-  align-items:center;justify-content:space-between;gap:12px;
-  box-shadow:0 -4px 20px rgba(0,0,0,0.3);font-family:var(--font-display)">
-  <div style="display:flex;align-items:center;gap:10px">
-    <span style="font-size:20px">🔄</span>
-    <div>
-      <div style="font-weight:700;font-size:14px">New version available</div>
-      <div style="font-size:12px;opacity:0.8">Tap Update to get the latest features</div>
-    </div>
-  </div>
-  <button id="update-btn" style="background:#f7b810;color:#1a1a1a;font-weight:700;
-    border:none;border-radius:8px;padding:10px 20px;font-size:14px;
-    font-family:var(--font-display);cursor:pointer;white-space:nowrap;min-height:44px">
-    Update Now
-  </button>
-</div>
-
-<!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════
        PANEL 1: INWARD TAB
        Record raw materials arriving at the factory.
        Shows material rows AFTER supplier is chosen.
@@ -1421,10 +1402,9 @@ function showMsg(m, t) {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 function syncSt(s) {
   var dot = g("sdot"), lbl = g("slbl");
-  var pending = qLoad().length;
   if (s === "ok") {
     dot.style.background = "#4ade80"; dot.style.animation = "none";
-    lbl.textContent = pending > 0 ? pending + " pending" : "Synced";
+    lbl.textContent = "Synced";
   } else if (s === "ing") {
     dot.style.background = "#f7b810"; dot.style.animation = "pulse 1s infinite";
     lbl.textContent = "Syncing…";
@@ -1651,12 +1631,11 @@ async function diagnose() {
   log("\nDiagnosis complete. Share this output to debug the issue.");
 }
 
-/* Force an immediate sync of all queued entries */
 async function manualSync() {
   var q = qLoad();
-  if (!q.length) { showMsg("✓ Nothing pending — all entries already synced", "inf"); return; }
-  if (!scUrl)    { showMsg("No Sheets URL saved — go to ⚙ Sheets to configure", "err"); return; }
-  if (!navigator.onLine) { showMsg("No internet connection — will sync automatically when online", "wrn"); return; }
+  if (!q.length) { showMsg("✓ Nothing pending — all entries synced", "inf"); return; }
+  if (!scUrl)    { showMsg("No Sheets URL configured", "err"); return; }
+  if (!navigator.onLine) { showMsg("No internet — will sync automatically when online", "wrn"); return; }
   var btn = g("sync-now-btn");
   btn.textContent = "Syncing…";
   btn.disabled = true;
@@ -2343,59 +2322,8 @@ window.onload = function() {
      Only works when served over HTTPS (not from a local file). */
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js")
-      .then(function(reg) {
-        console.log("[PWA] SW registered:", reg.scope);
-
-        // Check for updates immediately on load
-        reg.update();
-
-        // Called whenever a new SW is found (installing or waiting)
-        function trackUpdate(sw) {
-          if (!sw) return;
-          if (sw.state === "installed") {
-            // New version is ready and waiting — show the banner
-            showUpdateBanner();
-          }
-          sw.addEventListener("statechange", function() {
-            if (sw.state === "installed") showUpdateBanner();
-          });
-        }
-
-        // New SW found during this session
-        reg.addEventListener("updatefound", function() {
-          trackUpdate(reg.installing);
-        });
-
-        // SW was already waiting before page loaded (e.g. user had app open)
-        if (reg.waiting) showUpdateBanner();
-      })
-      .catch(function(e) { console.warn("[PWA] SW failed:", e); });
-
-    // When the new SW takes control, reload to apply the update
-    navigator.serviceWorker.addEventListener("controllerchange", function() {
-      window.location.reload();
-    });
-  }
-
-  function showUpdateBanner() {
-    var banner = g("update-banner");
-    banner.style.display = "flex";
-    g("update-btn").onclick = function() {
-      g("update-btn").textContent = "Updating…";
-      g("update-btn").disabled = true;
-      // Tell the waiting SW to skip waiting and take control immediately
-      if (navigator.serviceWorker.controller) {
-        navigator.serviceWorker.getRegistration().then(function(reg) {
-          if (reg && reg.waiting) {
-            reg.waiting.postMessage({ type: "SKIP_WAITING" });
-          } else {
-            window.location.reload();
-          }
-        });
-      } else {
-        window.location.reload();
-      }
-    };
+      .then(function(reg) { console.log("[PWA] SW registered:", reg.scope); })
+      .catch(function(e)  { console.warn("[PWA] SW failed:", e); });
   }
 
   /* ── PWA Install Prompt ──
@@ -2452,12 +2380,9 @@ window.onload = function() {
   /* Retry any pending queue items every 30 seconds */
   setInterval(runSyncQueue, 30000);
 
-  /* On startup: show pending badge and immediately try to sync any queued items */
+  /* On startup: show badge and immediately try to sync any queued entries */
   updateQueueBadge();
-  if (qLoad().length > 0) {
-    showMsg("📤 " + qLoad().length + " unsynced entr" + (qLoad().length>1?"ies":"y") + " found — syncing now…", "inf");
-    runSyncQueue();
-  }
+  setTimeout(runSyncQueue, 2000);  /* slight delay so app finishes loading first */
 };
 
 </script>
