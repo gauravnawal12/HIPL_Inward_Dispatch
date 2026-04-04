@@ -986,7 +986,26 @@ tr:hover td { background: rgba(247,184,16,.04); }
   </div>
 
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- UPDATE BANNER — shown when a new version of the app is available -->
+<div id="update-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;
+  background:#1e3a5f;color:#fff;padding:14px 20px;display:none;
+  align-items:center;justify-content:space-between;gap:12px;
+  box-shadow:0 -4px 20px rgba(0,0,0,0.3);font-family:var(--font-display)">
+  <div style="display:flex;align-items:center;gap:10px">
+    <span style="font-size:20px">🔄</span>
+    <div>
+      <div style="font-weight:700;font-size:14px">New version available</div>
+      <div style="font-size:12px;opacity:0.8">Tap Update to get the latest features</div>
+    </div>
+  </div>
+  <button id="update-btn" style="background:#f7b810;color:#1a1a1a;font-weight:700;
+    border:none;border-radius:8px;padding:10px 20px;font-size:14px;
+    font-family:var(--font-display);cursor:pointer;white-space:nowrap;min-height:44px">
+    Update Now
+  </button>
+</div>
+
+<!-- ═══════════════════════════════════════════════
        PANEL 1: INWARD TAB
        Record raw materials arriving at the factory.
        Shows material rows AFTER supplier is chosen.
@@ -1428,144 +1447,134 @@ function syncSt(s) {
    sheet   = name of the Google Sheet tab to write to
    headers = column headers (first row, created once if tab is new)
    rows    = array of data rows to append */
-async function pushOne(sheet, headers, rows) {
-  if (!scUrl || !rows.length) return;  /* skip if no URL configured */
-  var r = await fetch(scUrl, {
-    method: "POST",
-    /* "text/plain" avoids CORS preflight — Apps Script accepts this */
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify({ sheet: sheet, headers: headers, rows: rows })
-  });
-  var j = await r.json();
-  if (j.status !== "ok") throw new Error("Sheets rejected: " + sheet);
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SYNC QUEUE SYSTEM
+   ─────────────────────────────────────────────────────────────
+   Every Sheets write is first saved to a persistent queue in
+   localStorage. A background loop retries failed/pending items
+   every 30 seconds and also fires immediately when the device
+   comes back online. This guarantees zero missed entries even
+   if the user is offline, closes the app mid-sync, or the
+   network drops partway through a save.
+
+   Queue item shape:
+   { id, type ("inward"|"dispatch"), who, veh, headers, rows,
+     added (ISO timestamp), tries (attempt count), lastErr }
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* ── Queue helpers ── */
+function qLoad()     { try { return JSON.parse(localStorage.getItem(QK) || "[]"); } catch(e) { return []; } }
+function qSave(q)    { localStorage.setItem(QK, JSON.stringify(q)); }
+function qRemove(id) { qSave(qLoad().filter(function(x){ return x.id !== id; })); }
+
+function updateQueueBadge() {
+  var pending = qLoad().length;
+  var lbl = g("slbl"), dot = g("sdot");
+  if (pending > 0) {
+    lbl.textContent        = pending + " pending";
+    dot.style.background   = "#f7b810";
+    dot.style.animation    = "pulse 1s infinite";
+  }
 }
 
-/* Push inward entry — goes to the "Inward" tab only */
+/* ── Single HTTP attempt — throws on any failure ── */
+async function fetchPost(payload) {
+  var r = await fetch(scUrl, {
+    method: "POST", headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  var txt = await r.text();
+  var j;
+  try { j = JSON.parse(txt); } catch(ex) { throw new Error("Bad JSON: " + txt.slice(0,80)); }
+  if (j.status !== "ok") throw new Error("Script rejected: " + txt.slice(0,120));
+  return j;
+}
+
+/* ── Send one queued item to all required sheet tabs ── */
+async function syncItem(item) {
+  if (item.type === "inward") {
+    await fetchPost({ sheet: "Inward", headers: item.headers, rows: item.rows });
+  } else {
+    await fetchPost({ sheet: "Outward",              headers: item.headers, rows: item.rows });
+    await fetchPost({ sheet: "Dispatch - " + item.who, headers: item.headers, rows: item.rows });
+    var combinedRows = item.rows.filter(function(row) {
+      if (item.who === "Guard")  return false;
+      if (item.who === "Mukesh") return MUKESH_VEHICLES.indexOf(row[5]) === -1;
+      return true;
+    });
+    if (combinedRows.length > 0) {
+      var j = await fetchPost({
+        sheet: "Combined", headers: item.headers, rows: combinedRows,
+        sortByDate: true, rebuildSummaryAfter: true
+      });
+      if (j.summaryRows !== undefined) {
+        showMsg("✓ Synced — Daily Summary: " + j.summaryRows + " rows", "inf");
+      }
+    }
+  }
+}
+
+/* ── Main sync loop ── */
+var _syncing = false;
+async function runSyncQueue() {
+  if (_syncing || !scUrl || !navigator.onLine) return;
+  var q = qLoad();
+  if (!q.length) return;
+
+  _syncing = true;
+  syncSt("ing");
+
+  var anyFail = false;
+  for (var i = 0; i < q.length; i++) {
+    var item = q[i];
+    try {
+      await syncItem(item);
+      qRemove(item.id);
+    } catch(e) {
+      anyFail = true;
+      /* Update retry count in queue */
+      var qq = qLoad();
+      var ix = qq.findIndex(function(x){ return x.id === item.id; });
+      if (ix !== -1) { qq[ix].tries = (qq[ix].tries||0)+1; qq[ix].lastErr = e.message||String(e); qSave(qq); }
+    }
+  }
+
+  _syncing = false;
+
+  var remaining = qLoad().length;
+  if (remaining === 0) {
+    syncSt("ok");
+    g("slbl").textContent = "Synced";
+  } else {
+    syncSt("err");
+    updateQueueBadge();
+    showMsg(remaining + " entr" + (remaining>1?"ies":"y") + " pending — will retry automatically", "wrn");
+  }
+}
+
+/* ── Queue an inward entry then try to sync immediately ── */
 async function pushInward(rows) {
   if (!scUrl) return;
-  syncSt("ing");
-  try {
-    await pushOne("Inward",
-      ["Date","Month","Time","Supplier Name","Bill/Challan No.","Material Name","Vehicle No.","Quantity"],
-      rows);
-    syncSt("ok");
-  } catch(e) {
-    syncSt("err");
-    /* Show the actual error message so we can diagnose */
-    showMsg("Sync error: " + (e.message || e), "err");
-  }
+  var IH = ["Date","Month","Time","Supplier Name","Bill/Challan No.","Material Name","Vehicle No.","Quantity"];
+  var q = qLoad();
+  q.push({ id: uid(), type: "inward", headers: IH, rows: rows, added: new Date().toISOString(), tries: 0, lastErr: "" });
+  qSave(q);
+  updateQueueBadge();
+  runSyncQueue();
 }
 
-/* Push dispatch entry — goes to MULTIPLE tabs:
-   1. "Outward"         — master sheet, every dispatch entry from everyone
-   2. "Dispatch - Name" — personal sheet for whoever entered it
-   3. "Combined"        — filtered sheet (see rules), sorted by date
-   4. "Daily Summary"   — aggregated totals: Date + Machine + Product + Thickness + Color
-
-   COMBINED SHEET RULES:
-   - Every entry by Subhash goes here
-   - Every entry by Anandaram goes here
-   - Mukesh entries ONLY where vehicle is NOT in his own vehicles list
-   The Apps Script sorts Combined by date, then rebuilds Daily Summary from it. */
+/* ── Queue a dispatch entry then try to sync immediately ── */
 async function pushDispatch(who, headers, rows, veh) {
   if (!scUrl) return;
-  syncSt("ing");
-  try {
-    /* 1. Always: send to "Outward" master sheet (every dispatch, all people) */
-    await pushOne("Outward", headers, rows);
-
-    /* 2. Always: send to this person's personal sheet */
-    await pushOne("Dispatch - " + who, headers, rows);
-
-    /* 3. Combined sheet: filter rows by the Combined rules */
-    /* COMBINED SHEET RULES — who goes in:
-       - Guard : NEVER — Guard tab is for verification only
-       - Mukesh: only when vehicle is NOT one of his own (MUKESH_VEHICLES)
-       - Subhash, Anandaram: always included */
-    var combinedRows = rows.filter(function(row) {
-      if (who === "Guard") return false;          /* Guard never goes to Combined */
-      var rowVeh = row[5];                        /* column index 5 = Vehicle No. */
-      if (who === "Mukesh") {
-        return MUKESH_VEHICLES.indexOf(rowVeh) === -1;
-      }
-      return true; /* Subhash & Anandaram: always included */
-    });
-
-    /* 3. Push to Combined (filtered — Guard and Mukesh's own vehicles excluded) */
-    if (combinedRows.length > 0) {
-      await pushOneSorted("Combined", headers, combinedRows);
-    }
-
-    /* 4. Daily Summary is rebuilt inside pushOneSorted (rebuildSummaryAfter:true)
-          so it happens atomically on the server after Combined is updated.
-          No separate call needed — the combined write and summary rebuild
-          happen in the same Apps Script execution. */
-
-    syncSt("ok");
-  } catch(e) {
-    syncSt("err");
-    showMsg("Saved locally — Sheets sync failed","wrn");
-  }
+  var q = qLoad();
+  q.push({ id: uid(), type: "dispatch", who: who, veh: veh, headers: headers, rows: rows, added: new Date().toISOString(), tries: 0, lastErr: "" });
+  qSave(q);
+  updateQueueBadge();
+  runSyncQueue();
 }
 
-/* Ask Apps Script to rebuild the "Daily Summary" sheet from the Combined sheet.
-   Apps Script reads Combined, groups by Date+Machine+Product+Thickness+Color,
-   sums quantities, and writes the result to "Daily Summary" fresh each time.
-   We don't send any rows — the server does all the aggregation work. */
-async function pushSummary(summaryHeaders) {
-  if (!scUrl) return;
-  var r = await fetch(scUrl, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify({
-      sheet: "Daily Summary",
-      headers: summaryHeaders,
-      rows: [],
-      rebuildSummary: true
-    })
-  });
-  /* Parse response — show exactly what Apps Script returned for debugging */
-  var txt = await r.text();
-  var j;
-  try { j = JSON.parse(txt); } catch(ex) { j = {}; }
-  if (j.status === "ok") {
-    if (j.summaryRows > 0) {
-      showMsg("✓ Synced — Daily Summary: " + j.summaryRows + " rows updated", "inf");
-    }
-  } else {
-    showMsg("Sync error: " + txt.slice(0, 120), "err");
-    throw new Error("Sheets error: " + txt.slice(0, 120));
-  }
-}
 
-/* Like pushOne but tells Apps Script to sort by date column after appending.
-   Used only for the Combined sheet so it stays date-ordered at all times. */
-async function pushOneSorted(sheet, headers, rows) {
-  if (!scUrl || !rows.length) return;
-  var r = await fetch(scUrl, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    /* sortByDate:true + rebuildSummaryAfter:true — Apps Script will:
-       1. Append the rows to Combined
-       2. Sort Combined by date
-       3. Immediately rebuild Daily Summary from the now-updated Combined
-       All in one server-side transaction — no race condition. */
-    body: JSON.stringify({
-      sheet: sheet,
-      headers: headers,
-      rows: rows,
-      sortByDate: true,
-      rebuildSummaryAfter: true
-    })
-  });
-  var txt = await r.text();
-  var j;
-  try { j = JSON.parse(txt); } catch(ex) { j = {}; }
-  if (j.status !== "ok") throw new Error("Sheets rejected: " + sheet + " — " + txt.slice(0,100));
-  if (j.summaryRows !== undefined) {
-    showMsg("✓ Saved — Daily Summary: " + j.summaryRows + " rows", "inf");
-  }
-}
 
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2303,7 +2312,7 @@ window.onload = function() {
      This is the code the user must paste into their Google Sheet's
      Apps Script editor to enable the cloud sync feature.
      It creates/appends to sheet tabs by name on every POST call. */
-  g("codebox").textContent = "// Sheet names that feed into Combined/Outward\nvar DISPATCH_SHEETS = [\n  \"Dispatch - Mukesh\",\n  \"Dispatch - Subhash\",\n  \"Dispatch - Anandaram\",\n  \"Dispatch - Guard\"\n];\n\n// Mukesh own vehicles \u2014 excluded from Combined\nvar MUKESH_VEHICLES = [\n  \"RJ 19 RF 8056\",\n  \"RJ 07 RA 9480\",\n  \"RJ 19 GJ 9279\",\n  \"RJ 19 GG 2398\"\n];\n\nvar OH = [\"Date\",\"Time\",\"Entered By\",\"Party Name\",\"Bill/Challan Number\",\n          \"Vehicle No.\",\"Machine\",\"Product\",\"Thickness\",\"Color\",\"Material Quantity\"];\n\n\n// \u2500\u2500 onEdit trigger \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Called automatically on any manual cell edit.\n// Guard against being run manually (no event object) with a try/catch.\nfunction onEdit(e) {\n  try {\n    var name    = e.range.getSheet().getName();\n    var watched = DISPATCH_SHEETS.concat([\"Outward\", \"Combined\"]);\n    if (watched.indexOf(name) === -1) return;\n    rebuildAll(SpreadsheetApp.getActiveSpreadsheet());\n  } catch(err) {\n    // Silently ignore if called without a proper event (e.g. manual run)\n  }\n}\n\n// \u2500\u2500 manualRebuild \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Run this function manually from the Apps Script editor to force a full rebuild.\n// Unlike onEdit, this does not need an event object.\nfunction manualRebuild() {\n  var ss = SpreadsheetApp.openById(\"1C4heyLELF7CJsFqC-c53SJwcpIxQPBZm6EYdjBl-cdg\");\n  var count = rebuildAll(ss);\n  SpreadsheetApp.getUi().alert(\"Rebuild complete. Daily Summary: \" + count + \" rows.\");\n}\n\n\n// \u2500\u2500 doPost \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction doPost(e) {\n  var ss   = SpreadsheetApp.openById(\"1C4heyLELF7CJsFqC-c53SJwcpIxQPBZm6EYdjBl-cdg\");\n  var data = JSON.parse(e.postData.contents);\n\n  if (data.testOnly) {\n    return ContentService\n      .createTextOutput(JSON.stringify({status:\"ok\",test:true}))\n      .setMimeType(ContentService.MimeType.JSON);\n  }\n\n  var sheet = ss.getSheetByName(data.sheet);\n  if (!sheet) sheet = ss.insertSheet(data.sheet);\n\n  if (sheet.getLastRow() === 0) {\n    sheet.appendRow(data.headers);\n    var h0 = sheet.getRange(1, 1, 1, data.headers.length);\n    h0.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n    sheet.setFrozenRows(1);\n    sheet.setColumnWidths(1, data.headers.length, 140);\n  }\n\n  data.rows.forEach(function(r) { sheet.appendRow(r); });\n\n  if (data.sortByDate && sheet.getLastRow() > 2) {\n    sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn())\n         .sort({column:1, ascending:true});\n  }\n\n  var summaryRowCount = 0;\n  if (data.rebuildSummaryAfter) {\n    summaryRowCount = rebuildAll(ss);\n  }\n\n  return ContentService\n    .createTextOutput(JSON.stringify({\n      status: \"ok\",\n      added: data.rows.length,\n      summaryRows: summaryRowCount\n    }))\n    .setMimeType(ContentService.MimeType.JSON);\n}\n\n\n// \u2500\u2500 rebuildAll \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction rebuildAll(ss) {\n  var tz = Session.getScriptTimeZone();\n\n  // Collect all rows from every Dispatch sheet\n  var allRows = [];\n  DISPATCH_SHEETS.forEach(function(sName) {\n    var sh = ss.getSheetByName(sName);\n    if (!sh || sh.getLastRow() < 2) return;\n    var rows = sh.getRange(2, 1, sh.getLastRow()-1, sh.getLastColumn()).getValues();\n    rows.forEach(function(row) {\n      var d = row[0];\n      row[0] = (d instanceof Date && !isNaN(d))\n               ? Utilities.formatDate(d, tz, \"dd/MM/yyyy\")\n               : String(d).trim();\n      row[2] = String(row[2]).trim();\n      allRows.push(row);\n    });\n  });\n\n  // Sort by date ascending\n  allRows.sort(function(a, b) {\n    function pd(s) {\n      var p = String(s).split(\"/\");\n      return p.length === 3 ? new Date(p[2], p[1]-1, p[0]) : new Date(0);\n    }\n    return pd(a[0]) - pd(b[0]);\n  });\n\n  // Rebuild Outward\n  rebuildSheet(ss, \"Outward\", OH, allRows);\n\n  // Rebuild Combined (Guard excluded, Mukesh own-vehicle excluded)\n  var combinedRows = allRows.filter(function(row) {\n    var who = row[2];\n    var veh = String(row[5]).trim();\n    if (who === \"Guard\") return false;\n    if (who === \"Mukesh\") return MUKESH_VEHICLES.indexOf(veh) === -1;\n    return true;\n  });\n  rebuildSheet(ss, \"Combined\", OH, combinedRows);\n\n  // Rebuild Daily Summary from Combined rows\n  var tot = {};\n  combinedRows.forEach(function(row) {\n    var d  = row[0];\n    // dd-MM-yyyy with dashes so Sheets does not auto-convert to a Date object\n    var ds = (d instanceof Date && !isNaN(d))\n             ? Utilities.formatDate(d, tz, \"dd-MM-yyyy\")\n             : String(d).trim().replace(/[/]/g, \"-\");\n    var mac = String(row[6]||\"\").trim();\n    var pro = String(row[7]||\"\").trim();\n    var thk = String(row[8]||\"\").trim();\n    var col = String(row[9]||\"\").trim();\n    var qty = Number(row[10])||0;\n    if (!mac || !ds) return;\n    var k = ds+\"|\"+mac+\"|\"+pro+\"|\"+thk+\"|\"+col;\n    tot[k] = (tot[k]||0) + qty;\n  });\n\n  var SH = [\"Date\",\"Machine\",\"Product\",\"Thickness\",\"Color\",\"Total Dispatched\"];\n  var sRows = Object.keys(tot).map(function(k) {\n    var p = k.split(\"|\");\n    return [p[0], p[1], p[2], p[3], p[4], tot[k]];\n  }).sort(function(a, b) {\n    function pd(s) {\n      var p = String(s).split(\"-\");\n      return p.length===3 ? new Date(p[2], p[1]-1, p[0]) : new Date(0);\n    }\n    var diff = pd(a[0]) - pd(b[0]);\n    return diff !== 0 ? diff : String(a[1]).localeCompare(String(b[1]));\n  });\n\n  var dst = ss.getSheetByName(\"Daily Summary\");\n  if (!dst) dst = ss.insertSheet(\"Daily Summary\");\n  dst.clearContents();\n\n  var out = [SH].concat(sRows);\n  dst.getRange(1, 1, out.length, SH.length).setValues(out);\n  var h1 = dst.getRange(1, 1, 1, SH.length);\n  h1.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n  dst.setFrozenRows(1);\n  dst.setColumnWidths(1, SH.length, 140);\n\n  return sRows.length;\n}\n\n\n// \u2500\u2500 rebuildSheet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction rebuildSheet(ss, name, headers, rows) {\n  var sh = ss.getSheetByName(name);\n  if (!sh) sh = ss.insertSheet(name);\n  sh.clearContents();\n  var nc = headers.length;\n  // Trim or pad every row to exactly nc columns so setValues never throws\n  // \"data has X but range has Y\" when the sheet contains extra columns\n  var safeRows = rows.map(function(row) {\n    var r = row.slice(0, nc);\n    while (r.length < nc) r.push(\"\");\n    return r;\n  });\n  var writeData = [headers].concat(safeRows);\n  sh.getRange(1, 1, writeData.length, nc).setValues(writeData);\n  var hdr = sh.getRange(1, 1, 1, headers.length);\n  hdr.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n  sh.setFrozenRows(1);\n  sh.setColumnWidths(1, headers.length, 140);\n}\n\n\n// \u2500\u2500 doGet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction doGet(e) {\n  return ContentService\n    .createTextOutput(JSON.stringify({status:\"ready\"}))\n    .setMimeType(ContentService.MimeType.JSON);\n}";
+  g("codebox").textContent = "// Sheet names that feed into Combined/Outward\nvar DISPATCH_SHEETS = [\n  \"Dispatch - Mukesh\",\n  \"Dispatch - Subhash\",\n  \"Dispatch - Anandaram\",\n  \"Dispatch - Guard\"\n];\n\n// Mukesh own vehicles \u2014 excluded from Combined\nvar MUKESH_VEHICLES = [\n  \"RJ 19 RF 8056\",\n  \"RJ 07 RA 9480\",\n  \"RJ 19 GJ 9279\",\n  \"RJ 19 GG 2398\"\n];\n\nvar OH = [\"Date\",\"Time\",\"Entered By\",\"Party Name\",\"Bill/Challan Number\",\n          \"Vehicle No.\",\"Machine\",\"Product\",\"Thickness\",\"Color\",\"Material Quantity\"];\n\n\n// \u2500\u2500 onEdit trigger \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Called automatically on any manual cell edit.\n// Guard against being run manually (no event object) with a try/catch.\nfunction onEdit(e) {\n  try {\n    var name    = e.range.getSheet().getName();\n    var watched = DISPATCH_SHEETS.concat([\"Outward\", \"Combined\"]);\n    if (watched.indexOf(name) === -1) return;\n    rebuildAll(SpreadsheetApp.getActiveSpreadsheet());\n  } catch(err) {\n    // Silently ignore if called without a proper event (e.g. manual run)\n  }\n}\n\n// \u2500\u2500 manualRebuild \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Run this function manually from the Apps Script editor to force a full rebuild.\n// Unlike onEdit, this does not need an event object.\nfunction manualRebuild() {\n  var ss = SpreadsheetApp.getActiveSpreadsheet();\n  var count = rebuildAll(ss);\n  SpreadsheetApp.getUi().alert(\"Rebuild complete. Daily Summary: \" + count + \" rows.\");\n}\n\n\n// \u2500\u2500 doPost \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction doPost(e) {\n  var ss   = SpreadsheetApp.openById(\"1C4heyLELF7CJsFqC-c53SJwcpIxQPBZm6EYdjBl-cdg\");\n  var data = JSON.parse(e.postData.contents);\n\n  if (data.testOnly) {\n    return ContentService\n      .createTextOutput(JSON.stringify({status:\"ok\",test:true}))\n      .setMimeType(ContentService.MimeType.JSON);\n  }\n\n  var sheet = ss.getSheetByName(data.sheet);\n  if (!sheet) sheet = ss.insertSheet(data.sheet);\n\n  if (sheet.getLastRow() === 0) {\n    sheet.appendRow(data.headers);\n    var h0 = sheet.getRange(1, 1, 1, data.headers.length);\n    h0.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n    sheet.setFrozenRows(1);\n    sheet.setColumnWidths(1, data.headers.length, 140);\n  }\n\n  data.rows.forEach(function(r) { sheet.appendRow(r); });\n\n  if (data.sortByDate && sheet.getLastRow() > 2) {\n    sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn())\n         .sort({column:1, ascending:true});\n  }\n\n  var summaryRowCount = 0;\n  if (data.rebuildSummaryAfter) {\n    summaryRowCount = rebuildAll(ss);\n  }\n\n  return ContentService\n    .createTextOutput(JSON.stringify({\n      status: \"ok\",\n      added: data.rows.length,\n      summaryRows: summaryRowCount\n    }))\n    .setMimeType(ContentService.MimeType.JSON);\n}\n\n\n// \u2500\u2500 rebuildAll \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction rebuildAll(ss) {\n  var tz = Session.getScriptTimeZone();\n\n  // Collect all rows from every Dispatch sheet\n  var allRows = [];\n  DISPATCH_SHEETS.forEach(function(sName) {\n    var sh = ss.getSheetByName(sName);\n    if (!sh || sh.getLastRow() < 2) return;\n    var rows = sh.getRange(2, 1, sh.getLastRow()-1, sh.getLastColumn()).getValues();\n    rows.forEach(function(row) {\n      var d = row[0];\n      row[0] = (d instanceof Date && !isNaN(d))\n               ? Utilities.formatDate(d, tz, \"dd/MM/yyyy\")\n               : String(d).trim();\n      row[2] = String(row[2]).trim();\n      allRows.push(row);\n    });\n  });\n\n  // Sort by date ascending\n  allRows.sort(function(a, b) {\n    function pd(s) {\n      var p = String(s).split(\"/\");\n      return p.length === 3 ? new Date(p[2], p[1]-1, p[0]) : new Date(0);\n    }\n    return pd(a[0]) - pd(b[0]);\n  });\n\n  // Rebuild Outward\n  rebuildSheet(ss, \"Outward\", OH, allRows);\n\n  // Rebuild Combined (Guard excluded, Mukesh own-vehicle excluded)\n  var combinedRows = allRows.filter(function(row) {\n    var who = row[2];\n    var veh = String(row[5]).trim();\n    if (who === \"Guard\") return false;\n    if (who === \"Mukesh\") return MUKESH_VEHICLES.indexOf(veh) === -1;\n    return true;\n  });\n  rebuildSheet(ss, \"Combined\", OH, combinedRows);\n\n  // Rebuild Daily Summary from Combined rows\n  var tot = {};\n  combinedRows.forEach(function(row) {\n    var d  = row[0];\n    // dd-MM-yyyy with dashes so Sheets does not auto-convert to a Date object\n    var ds = (d instanceof Date && !isNaN(d))\n             ? Utilities.formatDate(d, tz, \"dd-MM-yyyy\")\n             : String(d).trim().replace(/[/]/g, \"-\");\n    var mac = String(row[6]||\"\").trim();\n    var pro = String(row[7]||\"\").trim();\n    var thk = String(row[8]||\"\").trim();\n    var col = String(row[9]||\"\").trim();\n    var qty = Number(row[10])||0;\n    if (!mac || !ds) return;\n    var k = ds+\"|\"+mac+\"|\"+pro+\"|\"+thk+\"|\"+col;\n    tot[k] = (tot[k]||0) + qty;\n  });\n\n  var SH = [\"Date\",\"Machine\",\"Product\",\"Thickness\",\"Color\",\"Total Dispatched\"];\n  var sRows = Object.keys(tot).map(function(k) {\n    var p = k.split(\"|\");\n    return [p[0], p[1], p[2], p[3], p[4], tot[k]];\n  }).sort(function(a, b) {\n    function pd(s) {\n      var p = String(s).split(\"-\");\n      return p.length===3 ? new Date(p[2], p[1]-1, p[0]) : new Date(0);\n    }\n    var diff = pd(a[0]) - pd(b[0]);\n    return diff !== 0 ? diff : String(a[1]).localeCompare(String(b[1]));\n  });\n\n  var dst = ss.getSheetByName(\"Daily Summary\");\n  if (!dst) dst = ss.insertSheet(\"Daily Summary\");\n  dst.clearContents();\n\n  var out = [SH].concat(sRows);\n  dst.getRange(1, 1, out.length, SH.length).setValues(out);\n  var h1 = dst.getRange(1, 1, 1, SH.length);\n  h1.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n  dst.setFrozenRows(1);\n  dst.setColumnWidths(1, SH.length, 140);\n\n  return sRows.length;\n}\n\n\n// \u2500\u2500 rebuildSheet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction rebuildSheet(ss, name, headers, rows) {\n  var sh = ss.getSheetByName(name);\n  if (!sh) sh = ss.insertSheet(name);\n  sh.clearContents();\n  var nc = headers.length;\n  // Trim or pad every row to exactly nc columns so setValues never throws\n  // \"data has X but range has Y\" when the sheet contains extra columns\n  var safeRows = rows.map(function(row) {\n    var r = row.slice(0, nc);\n    while (r.length < nc) r.push(\"\");\n    return r;\n  });\n  var writeData = [headers].concat(safeRows);\n  sh.getRange(1, 1, writeData.length, nc).setValues(writeData);\n  var hdr = sh.getRange(1, 1, 1, headers.length);\n  hdr.setFontWeight(\"bold\").setBackground(\"#2c3b48\").setFontColor(\"#f7b810\");\n  sh.setFrozenRows(1);\n  sh.setColumnWidths(1, headers.length, 140);\n}\n\n\n// \u2500\u2500 doGet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction doGet(e) {\n  return ContentService\n    .createTextOutput(JSON.stringify({status:\"ready\"}))\n    .setMimeType(ContentService.MimeType.JSON);\n}";
 
   /* ── Show mobile-only Sheets setup button ── */
   if (window.innerWidth <= 700) g("mob-cfg").style.display = "block";
@@ -2318,8 +2327,59 @@ window.onload = function() {
      Only works when served over HTTPS (not from a local file). */
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js")
-      .then(function(reg) { console.log("[PWA] SW registered:", reg.scope); })
-      .catch(function(e)  { console.warn("[PWA] SW failed:", e); });
+      .then(function(reg) {
+        console.log("[PWA] SW registered:", reg.scope);
+
+        // Check for updates immediately on load
+        reg.update();
+
+        // Called whenever a new SW is found (installing or waiting)
+        function trackUpdate(sw) {
+          if (!sw) return;
+          if (sw.state === "installed") {
+            // New version is ready and waiting — show the banner
+            showUpdateBanner();
+          }
+          sw.addEventListener("statechange", function() {
+            if (sw.state === "installed") showUpdateBanner();
+          });
+        }
+
+        // New SW found during this session
+        reg.addEventListener("updatefound", function() {
+          trackUpdate(reg.installing);
+        });
+
+        // SW was already waiting before page loaded (e.g. user had app open)
+        if (reg.waiting) showUpdateBanner();
+      })
+      .catch(function(e) { console.warn("[PWA] SW failed:", e); });
+
+    // When the new SW takes control, reload to apply the update
+    navigator.serviceWorker.addEventListener("controllerchange", function() {
+      window.location.reload();
+    });
+  }
+
+  function showUpdateBanner() {
+    var banner = g("update-banner");
+    banner.style.display = "flex";
+    g("update-btn").onclick = function() {
+      g("update-btn").textContent = "Updating…";
+      g("update-btn").disabled = true;
+      // Tell the waiting SW to skip waiting and take control immediately
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.getRegistration().then(function(reg) {
+          if (reg && reg.waiting) {
+            reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          } else {
+            window.location.reload();
+          }
+        });
+      } else {
+        window.location.reload();
+      }
+    };
   }
 
   /* ── PWA Install Prompt ──
@@ -2356,12 +2416,28 @@ window.onload = function() {
      Hides it when connection is restored. */
   function checkOnline() {
     g("offline-bar").style.display = navigator.onLine ? "none" : "block";
-    if (!navigator.onLine) syncSt("err");
-    else if (scUrl) syncSt("ok");
+    if (!navigator.onLine) {
+      syncSt("err");
+    } else {
+      /* Back online — immediately flush any queued entries */
+      var pending = qLoad().length;
+      if (pending > 0) {
+        showMsg("Connection restored — syncing " + pending + " pending entr" + (pending>1?"ies":"y") + "…", "inf");
+        runSyncQueue();
+      } else if (scUrl) {
+        syncSt("ok");
+      }
+    }
   }
   window.addEventListener("online",  checkOnline);
   window.addEventListener("offline", checkOnline);
   checkOnline();
+
+  /* Retry any pending queue items every 30 seconds */
+  setInterval(runSyncQueue, 30000);
+
+  /* Show pending badge on startup if there are queued items */
+  updateQueueBadge();
 };
 
 </script>
