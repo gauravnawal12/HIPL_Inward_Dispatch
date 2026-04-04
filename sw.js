@@ -32,7 +32,7 @@
    Change this string (e.g. "helix-v2") every time you update the app.
    Old caches with different names get automatically deleted below.
 ──────────────────────────────────────────────────────────────────── */
-var CACHE_NAME = "helix-v24";
+var CACHE_NAME = "helix-v10";
 
 /* ─── FILES TO PRE-CACHE ────────────────────────────────────────────
    These files are downloaded and saved to the device on first visit.
